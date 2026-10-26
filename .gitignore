@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# PyInstaller output; the spec and release script are tracked.
+dist/
+build/*
+!build/cue.spec
+!build/release.py
+
+cue-anime-debug.log
+cue-design.md

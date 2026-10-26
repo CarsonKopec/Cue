@@ -1,0 +1,21 @@
+# Ready-to-run HiAnime + HydraHD + VLC configuration. Keep player settings above tables.
+# Starts on HiAnime; press Tab (or run with -p hydra) for HydraHD movies and TV.
+default_provider = "anime"
+player = "vlc"
+player_args = []
+auto_skip = true
+auto_next = true
+quality = "best"
+
+[providers.anime]
+base_api = "https://hianime.at"
+language = "sub" # Starting choice; use the episode selector or b to change.
+timeout = 20
+
+[providers.hydra]
+base_url = "https://hydrahd.com"
+timeout = 20
+
+[subtitles]
+languages = ["en"]
+auto_download = true

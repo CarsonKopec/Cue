@@ -1,0 +1,25 @@
+<?vlc
+-- SPDX-License-Identifier: GPL-2.0-or-later
+-- Based on VLC's share/lua/http/requests/status.json.
+-- Copyright (C) 2005-2009 the VideoLAN team
+-- Original author: Rob Jonson <rob -at- hobbyistsoftware -dot- com>
+-- Cue additions: explicit subtitle selection and track diagnostics.
+-- This file is supplied with Cue, not installed into or substituted in VLC.
+
+local httprequests = require "httprequests"
+
+if _GET.command == "cue_addsubtitle" then
+    -- Cue supplies a file URI; VLC's add_subtitle variant expects a native path.
+    vlc.input.add_subtitle_mrl(_GET.val, _GET.select == "true")
+else
+    httprequests.processcommands()
+end
+
+local status = httprequests.getstatus(true)
+local input = vlc.object.input()
+if input then
+    status.cue_subtitle_track = vlc.var.get(input, "spu-es")
+    status.cue_subtitle_tracks = vlc.var.get_list(input, "spu-es")
+end
+httprequests.printTableAsJson(status)
+?>
