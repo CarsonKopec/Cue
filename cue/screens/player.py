@@ -60,12 +60,14 @@ class NowPlayingScreen(CueScreen):
         Binding("s", "skip", "Skip 85s"),
         Binding("c", "cycle_subtitles", "Subs"),
         Binding("C,shift+c", "pick_subtitles", "Pick subs"),
+        Binding("t", "cast", "Send to TV"),
         Binding("q", "stop", "Stop"),
     ]
 
     def __init__(self, session: PlaybackSession) -> None:
         super().__init__()
         self.session = session
+        self._cast_when_stopped = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -93,7 +95,11 @@ class NowPlayingScreen(CueScreen):
 
     async def _run(self) -> None:
         await self.session.run()
-        if self.session.state.error:
+        if self._cast_when_stopped:
+            # Cast once the player has closed and saved the resume point.
+            session = self.session
+            self.cue.cast(session.provider_name, session.show, session.queue[session.index:], provider=session.provider)
+        elif self.session.state.error:
             self.notify(self.session.state.error, title="Playback stopped", severity="error")
         while self.app.screen is not self and len(self.app.screen_stack) > 1:
             self.app.pop_screen()  # e.g. a subtitle picker left open
@@ -178,4 +184,13 @@ class NowPlayingScreen(CueScreen):
             self.notify(str(exc), title="Subtitles", severity="error")
 
     def action_stop(self) -> None:
+        self.session.stop()
+
+    def action_cast(self) -> None:
+        """Move playback to the TV: stop here, then cast this episode and the rest of the queue."""
+        if self.cue.cast_server is None:
+            session = self.session
+            self.cue.cast(session.provider_name, session.show, session.queue[session.index:])  # explains why not
+            return
+        self._cast_when_stopped = True
         self.session.stop()

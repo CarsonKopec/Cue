@@ -2,21 +2,50 @@
 # PyInstaller spec for a single-file, console-attached cue.exe (the TUI *is* the app).
 # From the repo root:  python build/release.py   (or: pyinstaller build/cue.spec)
 import importlib.util
+import sys
 from pathlib import Path
+
+import certifi
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent
 
+
+def _no_tests(name):
+    return ".test" not in name and ".tests" not in name and "idlelib" not in name
+
+
+# Plugins are plain Python run by cue.exe, so they can import only what's bundled: all of
+# Cue (some modules, such as cue.player.process, exist for plugins), and these standard
+# library modules besides the ones Cue itself uses.
+PLUGIN_STDLIB_PACKAGES = ["asyncio", "concurrent", "email", "html", "http", "json", "urllib", "xml", "zoneinfo"]
+PLUGIN_STDLIB_MODULES = [
+    "ast", "base64", "binascii", "bisect", "calendar", "colorsys", "csv", "dataclasses", "datetime", "decimal",
+    "difflib", "enum", "fnmatch", "fractions", "functools", "glob", "gzip", "hashlib", "heapq", "hmac",
+    "ipaddress", "itertools", "locale", "math", "mimetypes", "operator", "pprint", "queue", "random", "secrets",
+    "shlex", "shutil", "socket", "ssl", "statistics", "string", "struct", "subprocess", "tempfile", "textwrap",
+    "threading", "tomllib", "unicodedata", "uuid", "webbrowser", "zipfile", "zlib",
+]
+
 hiddenimports = (
-    collect_submodules("cue.providers")  # found by scanning at runtime, never imported by name
+    collect_submodules("cue")  # providers and players are found at runtime, and plugins import the rest
     + collect_submodules("textual")  # widgets and drivers are imported lazily
     + collect_submodules("rapidfuzz")
+    + collect_submodules("httpx")
+    + collect_submodules("tomlkit")
+    + [module for package in PLUGIN_STDLIB_PACKAGES for module in collect_submodules(package, filter=_no_tests)]
+    + PLUGIN_STDLIB_MODULES
 )
 if importlib.util.find_spec("yt_dlp") is not None:  # optional downloads
     hiddenimports += collect_submodules("yt_dlp")
 
 datas = collect_data_files("textual")  # Textual's CSS and other assets
+# conda-forge's certifi has no cacert.pem of its own: it reads the environment's
+# Library\ssl\cacert.pem relative to sys.base_prefix, which is the unpacked exe when frozen.
+ca_bundle = Path(certifi.where())
+if ca_bundle.parent.name != "certifi":
+    datas.append((str(ca_bundle), ca_bundle.parent.relative_to(sys.base_prefix).as_posix()))
 datas.append((
     str(root / "cue" / "player" / "vlc_http" / "requests" / "status.json"),
     "cue/player/vlc_http/requests",

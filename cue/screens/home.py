@@ -30,6 +30,7 @@ def describe_history(entry: HistoryEntry) -> Text:
 class HomeScreen(CueScreen):
     BINDINGS = [
         Binding("slash", "focus_search", "Search"),
+        Binding("p", "app.open_plugins", "Plugins"),
         Binding("q", "app.quit", "Quit"),
         Binding("down", "focus_list", show=False),
         Binding("escape", "focus_list", show=False),

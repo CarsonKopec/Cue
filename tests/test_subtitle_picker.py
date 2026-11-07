@@ -66,7 +66,7 @@ async def test_shift_c_picker_works_without_api_key_and_displays_audio_mode(tmp_
     monkeypatch.setattr("cue.app.create_providers", lambda *args: ({"test": TestProvider()}, {}))
     app = CueApp(
         Config(subtitles=SubtitleConfig(auto_download=False)), store=store,
-        player_factory=lambda: player, plugin_dir=tmp_path,
+        player_factory=lambda: player, dropin_dir=tmp_path,
         http=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, text=VTT))),
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -99,7 +99,7 @@ async def test_picker_left_open_across_next_episode_cannot_apply_old_track(tmp_p
     monkeypatch.setattr("cue.app.create_providers", lambda *args: ({"test": TestProvider()}, {}))
     app = CueApp(
         Config(subtitles=SubtitleConfig(auto_download=False)), store=store,
-        player_factory=factory, plugin_dir=tmp_path,
+        player_factory=factory, dropin_dir=tmp_path,
         http=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, text=VTT))),
     )
     async with app.run_test(size=(100, 30)) as pilot:

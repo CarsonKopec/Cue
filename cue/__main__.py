@@ -11,6 +11,8 @@ from pathlib import Path
 from cue import __version__
 from cue.config import ConfigError, config_path, load_config, log_path
 
+COMMANDS = ("install", "uninstall", "plugin", "plugins")  # see cue.commands
+
 
 def _setup_logging() -> None:
     path = log_path()
@@ -21,8 +23,15 @@ def _setup_logging() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in COMMANDS:
+        from cue.commands import run
+
+        return run(argv)
     parser = argparse.ArgumentParser(
-        prog="cue", description="Keyboard-driven terminal media player with automatic intro/outro skipping."
+        prog="cue", description="Keyboard-driven terminal media player with automatic intro/outro skipping.",
+        epilog="Other commands: cue install, cue uninstall, cue plugin (list|catalog|install|update|remove). "
+               "To search for one of these words, put -- first: cue -- install",
     )
     parser.add_argument("query", nargs="*", help="search for a show right away")
     parser.add_argument("-p", "--provider", help="provider to start with (default: from the config)")
@@ -37,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cue: {exc}", file=sys.stderr)
         return 2
     _setup_logging()
+
+    if not args.smoke_test:
+        from cue.commands import offer_install
+
+        offer_install()
 
     from cue.app import CueApp
 

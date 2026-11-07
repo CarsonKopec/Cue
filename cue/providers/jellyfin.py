@@ -18,7 +18,7 @@ import httpx
 
 from cue import __version__
 from cue.providers import register
-from cue.providers.base import Episode, ProviderConfigError, ProviderError, Show, Stream
+from cue.providers.base import Episode, ProviderConfigError, ProviderError, Setting, Show, Stream
 
 _MAL_KEYS = ("myanimelist", "mal")
 
@@ -40,6 +40,12 @@ def _quality(source: Mapping[str, Any]) -> str | None:
 @register
 class JellyfinProvider:
     name = "jellyfin"
+    title = "Jellyfin"
+    settings = (
+        Setting("url", "Server address", required=True, help="Such as http://192.168.1.10:8096"),
+        Setting("api_key", "API key", "secret", required=True, help="Create one in Dashboard → API Keys."),
+        Setting("user_id", "User ID", help="Optional. Empty uses the first user."),
+    )
 
     def __init__(self, options: Mapping[str, Any], *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.url = str(options.get("url") or "").rstrip("/")

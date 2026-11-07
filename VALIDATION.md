@@ -1,3 +1,108 @@
+# Plugins, players and self-install validation — 2026-11-07 (America/New_York)
+
+Both suites passed: **305 tests in Cue** and **316 in cue-plugins**. The plugins and
+their tests moved to the separate cue-plugins repository. All earlier HiAnime and
+HydraHD tests pass unchanged there against the plugin versions, which are loaded the
+way Cue loads installed plugins. cue-plugins also checks that every plugin is valid
+for Cue, that its catalog build is reproducible and readable by Cue, and that a
+changed plugin can't be published without a new version. New tests cover:
+
+- manifests, version checks and plugins that need a newer Cue
+- zip safety: paths outside the folder, absolute and drive paths, backslashes,
+  links, size limits, and GitHub-style single top folders
+- reproducible plugin zips
+- install, update (the new code is re-imported) and a failed update that keeps the
+  old version; turning plugins off and on; broken plugins; `lib/`; removal and
+  clean-up
+- the catalog: relative links, bad entries skipped, checksum mismatch, https-only
+  downloads including redirects (each hop is checked before it's requested), and
+  local catalogs
+- providers turned off, missing and reused; comment-preserving config edits; invalid
+  edits refused with the file left unchanged
+- the CLI: install from a zip and from a catalog, confirm prompt, update, list,
+  disable/enable, remove
+- the menu, driven through Textual's pilot:
+  - Providers: on/off, the settings form (required field, save) and default provider
+  - Players: choosing a player and its path
+  - Plugins: install from the catalog, on/off, remove, add from a zip file, and an
+    unavailable catalog
+- players: the registry and program lookup; `ProcessPlayer`'s arguments, failure
+  reports, a program that floods stderr (this once hung), quit and header refusals;
+  the ffplay and default-app plugins; playing through a plugin player with a note;
+  missing and other-OS players
+- install: PATH editing (case, trailing `\`, quotes, `%VARS%`), copying with the
+  files beside the exe, registry entries, re-install, uninstall that deletes only
+  Cue's files, the real Windows registry (a scratch key), and the first-run question
+
+## Live checks
+
+| Check | Result |
+| --- | --- |
+| ffplay plugin, 12 s local file | Played to the end (12.8 s) |
+| Same file, resume at 8 s | Ended after 4.9 s: started at the resume point |
+| Local HTTP stream with Referer and User-Agent | The server received both headers; played in full |
+| HTTP stream, resume at 8 s | 4.9 s |
+| HTTP 404 | ffplay exited in 0.6 s; Cue reported "Server returned 404 Not Found" |
+| Plugin zips built twice | Identical checksums |
+| Plugins menu, rendered at 110×30 | Tabs, tables, footer keys, settings form and install confirmation laid out correctly |
+| `cue.exe` (frozen), scratch Cue folder | Read a local catalog; installed all four plugins by name and from a zip; listed them; headless start loaded `anime` and `hydra` from plugins; turning `hydra` off removed it |
+| `cue.exe` HTTPS | Reached github.com (the unpublished catalog answered 404, not a TLS error) |
+
+Two problems were found and fixed along the way:
+- The first 0.2.0 build couldn't start. Its HTTPS client failed because conda-forge's
+  newer certifi reads the CA bundle from `Library\ssl\cacert.pem`, which PyInstaller
+  didn't bundle. The spec now bundles it, and `build/release.py` runs
+  `cue.exe --smoke-test` so a build like that fails.
+- Config edits changed a file's line endings on Windows. They now keep LF or CRLF
+  as the file had them.
+
+ffplay ran with SDL's dummy video and audio drivers, so nothing appeared on screen.
+The default-app plugin was tested with a stand-in opener, not by opening Media Player.
+`cue install` was tested against a stand-in registry and a scratch registry key; it
+hasn't been run against this PC's real PATH.
+
+# Cast-to-TV validation — 2026-10-31 (America/New_York)
+
+The full suite passed: **565 tests** (30 new for casting). The casting tests run the
+relay and DLNA server on a real local socket, with mocked upstream servers and an
+HTTP client standing in for the TV. They cover:
+
+- playlist rewriting and segment timing
+- header forwarding (credentials only to the source's own host)
+- subtitle renditions, including SRT → WebVTT
+- media-only streams and local files with ranges
+- resume and watched tracking
+- error replies and expired casts
+- DLNA description and Browse (paging, faults)
+- SSDP replies
+- `[cast]` config, the `t` key (also from the range box and Now Playing)
+- adapter selection: matching by name, the address listened on, missing
+  adapters, and the real adapter list on Windows
+
+## Live checks
+
+These ran on this PC with installed **VLC 3.0.23** standing in for the TV, using
+HydraHD's Breaking Bad — Season 1.
+
+| Check | Result |
+| --- | --- |
+| Cue app started with `[cast] enabled = true` | Server on the PC's network address (192.168.40.72) |
+| DLNA search (SSDP M-SEARCH for MediaServer) | Cue answered; its description named the server |
+| `t` on the Episodes screen | 7 episodes cast; notification showed the VLC path and direct link |
+| VLC's own DLNA client (`upnp://…/dlna/cds/control?ObjectID=c1`) | Browsed the folder and played episode 1 in 1080p through the relay |
+| Subtitle tracks in VLC | All 8 languages listed by name |
+| VLC preferred subtitle language `en` | English selected automatically |
+| No preferred language set | Subtitles off; VLC 3 ignores `DEFAULT=YES` on HLS subtitle tracks |
+| Resume via `EXT-X-START` | Ignored by VLC 3; removed |
+| TV seek to 10:00 / 15:00 | Resume point saved at 9:56 / 14:48 |
+| TV seek past 90% | Episode marked watched, resume point cleared |
+| Cue exit | Server and announcements stopped |
+
+VLC's DLNA client code was checked for how it reads items. It plays only
+`protocolInfo` values starting with `http-get:*:video/`, and Cue's items follow
+that. This was not tested on a real Xbox: discovery across the network, the Xbox
+VLC app's menus, and on-screen subtitle rendering still need a try on the console.
+
 # HydraHD validation — 2026-10-25 (America/New_York)
 
 The full suite passed: **535 tests in 22.6 seconds** (Windows, Python 3.14.8,

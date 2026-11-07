@@ -182,29 +182,3 @@ def test_registry_finds_builtins_and_plugins(tmp_path: Path) -> None:
     ready, problems = create_providers({"dummy": {"x": 1}, "local": {"path": ""}, "jellyfin": {}}, plugins)
     assert list(ready) == ["dummy"] and ready["dummy"].options == {"x": 1}
     assert set(problems) == {"local", "jellyfin"}
-
-
-def test_anime_server_html_extracts_server_choices() -> None:
-    from cue.providers.anime import _extract_server_choices
-
-    html = '''
-    <div class="item server-item" data-type="sub" data-server-name="ZokoAnime"
-         data-hash="aHR0cHM6Ly96b2tvYW5pbWUudmlkZW8vc3RyZWFtL21hbC8zNDU3Mi84NS9zdWI=">
-      <a href="javascript:;" class="btn">ZokoAnime</a>
-    </div>
-    <div class="item server-item" data-type="dub" data-server-name="HD-1"
-         data-hash="aHR0cHM6Ly9tZWdhcGxheS5idXp6L3N0cmVhbS9zLTIvMjc0NjEvZHViP3M9dGNkbg==">
-      <a href="javascript:;" class="btn">HD-1</a>
-    </div>
-    '''
-    assert _extract_server_choices(html) == [
-        ("https://zokoanime.video/stream/mal/34572/85/sub", "ZokoAnime", "sub"),
-        ("https://megaplay.buzz/stream/s-2/27461/dub?s=tcdn", "HD-1", "dub"),
-    ]
-
-
-def test_anime_server_html_ignores_invalid_hashes() -> None:
-    from cue.providers.anime import _extract_server_choices
-
-    html = '<div class="item server-item" data-type="sub" data-server-name="Bad" data-hash="not-base64!!!"></div>'
-    assert _extract_server_choices(html) == []

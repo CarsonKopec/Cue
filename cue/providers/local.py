@@ -18,7 +18,7 @@ from typing import Any
 from rapidfuzz import fuzz, process, utils
 
 from cue.providers import register
-from cue.providers.base import Episode, ProviderConfigError, ProviderError, Show, Stream
+from cue.providers.base import Episode, ProviderConfigError, ProviderError, Setting, Show, Stream
 
 VIDEO_EXTENSIONS = frozenset(
     {".mkv", ".mp4", ".avi", ".webm", ".m4v", ".mov", ".ts", ".wmv", ".flv", ".mpg", ".mpeg", ".ogv"}
@@ -168,6 +168,10 @@ def _resolution(quality: str | None) -> int:
 @register
 class LocalProvider:
     name = "local"
+    title = "Local folders"
+    settings = (
+        Setting("path", "Media folders", "folders", required=True, help="Separate several folders with ;"),
+    )
 
     def __init__(self, options: Mapping[str, Any]) -> None:
         raw = options.get("path", "")

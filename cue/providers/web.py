@@ -1,20 +1,14 @@
-"""Small, data-only resolvers for the server pages HiAnime actually advertises.
+"""Helpers for providers that read public web pages: careful fetching and stream parsing.
 
-Zoko's public player version 23 publishes a JSON ``window.__P`` envelope using
-base64 and the fixed byte mask in https://zokoanime.video/core/obfuscate.js?v=23.
-https://zokoanime.video/player.js?v=23 passes the decoded object to
-https://zokoanime.video/core/index.js?v=23, which plays its ``src`` as HLS.
-This module implements that published serialization, not JavaScript execution,
-authentication, DRM, inferred API calls, or the player's edge-host failover.
-
-MegaPlay supports only explicit video/source elements or JSON media sources.
-Its observed Error Code 410 page is a removed-content error, not a stream.
+Plugins may import these. ``fetch_page`` sends a fresh request (no inherited cookies
+or credentials), follows redirects only within the page's origin, bounds the body
+size and reports access refusals as :class:`ProviderError`. ``streams_from_payload``
+turns explicit JSON or HTML media rows into :class:`Stream` objects and refuses
+DRM-protected sources. Nothing here runs JavaScript or bypasses a challenge.
 """
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import re
 from collections.abc import Mapping
@@ -26,10 +20,8 @@ import httpx
 
 from cue.providers.base import ProviderError, Stream, StreamSubtitle
 
-_HOSTS = {"zokoanime.video", "megaplay.buzz"}
-_MAX_PAGE_BYTES = 2 * 1024 * 1024
-_MAX_REDIRECTS = 3
-_ZOKO_MASK = b"otaku-embed-v1"
+MAX_PAGE_BYTES = 2 * 1024 * 1024
+MAX_REDIRECTS = 3
 _MEDIA_EXTENSIONS = {"m3u8", "mpd", "mp4", "m4v", "webm", "mkv", "mov", "avi", "ts"}
 _MEDIA_TYPES = {
     "hls", "m3u8", "dash", "mpd", "mp4", "webm",
@@ -46,7 +38,8 @@ _PROTECTION_KEYS = {
     "drm", "drm_info", "drminfo", "keysystems", "key_systems", "keysystemoptions",
     "licenseurl", "license_url", "license", "encrypted", "isencrypted", "is_encrypted",
 }
-_CHALLENGE = re.compile(
+# Browser challenge and bot-check pages, which are reported rather than bypassed.
+CHALLENGE = re.compile(
     r"(?:<title>\s*(?:just a moment|attention required|access denied)|"
     r"/cdn-cgi/challenge-platform/|cf-chl-|id=[\"']challenge-form|"
     r"class=[\"'][^\"']*(?:g-recaptcha|h-captcha)|verify you are human)",
@@ -54,7 +47,8 @@ _CHALLENGE = re.compile(
 )
 
 
-def _http_url(value: Any, base_url: str) -> str | None:
+def http_url(value: Any, base_url: str) -> str | None:
+    """``value`` resolved against ``base_url`` if it is a plain HTTP(S) URL without credentials."""
     if not isinstance(value, str) or not value or re.search(r"[\x00-\x20\x7f]", value):
         return None
     try:
@@ -70,7 +64,7 @@ def _http_url(value: Any, base_url: str) -> str | None:
 
 
 def _media_url(value: Any, base_url: str, media_type: Any = None) -> str | None:
-    url = _http_url(value, base_url)
+    url = http_url(value, base_url)
     if url is None:
         return None
     path = urlsplit(url).path.lower()
@@ -93,7 +87,8 @@ def _quality(row: Mapping[str, Any]) -> str | None:
     return f"{int(match.group(1))}p" if match else None
 
 
-def _headers(value: Any) -> dict[str, str]:
+def valid_headers(value: Any) -> dict[str, str]:
+    """The string headers in ``value``; raises on names or values that could inject headers."""
     result: dict[str, str] = {}
     if not isinstance(value, Mapping):
         return result
@@ -110,18 +105,19 @@ def _protected(value: Any) -> bool:
     return value not in (None, False, "", "false", "False", 0, [], {})
 
 
-def _check_protection(row: Mapping[str, Any], depth: int = 0) -> None:
+def check_protection(row: Mapping[str, Any], depth: int = 0) -> None:
+    """Raise if a media description declares DRM or encryption anywhere inside it."""
     if depth > 12:
         raise ProviderError("Server media response is nested too deeply")
     for name, value in row.items():
         if str(name).lower() in _PROTECTION_KEYS and _protected(value):
             raise ProviderError("Encrypted or DRM-protected server sources are unsupported")
         if isinstance(value, Mapping):
-            _check_protection(value, depth + 1)
+            check_protection(value, depth + 1)
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, Mapping):
-                    _check_protection(item, depth + 1)
+                    check_protection(item, depth + 1)
 
 
 def _request_headers(
@@ -129,7 +125,7 @@ def _request_headers(
     explicit_referer: bool,
 ) -> dict[str, str]:
     result = dict(headers)
-    if referrer_policy and not explicit_referer and _embed_origin(url) != _embed_origin(base_url):
+    if referrer_policy and not explicit_referer and url_origin(url) != url_origin(base_url):
         result = {key: val for key, val in result.items() if key.lower() != "referer"}
         embed = urlsplit(base_url)
         if not (embed.scheme == "https" and urlsplit(url).scheme == "http"):
@@ -163,7 +159,7 @@ def _subtitle_tracks(
             continue
         url = next((
             candidate for key in ("src", "file", "url")
-            if (candidate := _http_url(row.get(key), base_url)) is not None
+            if (candidate := http_url(row.get(key), base_url)) is not None
         ), None)
         if url is None:
             continue
@@ -181,7 +177,7 @@ def _subtitle_tracks(
         # tracks independently and must not leak media cookies/auth to a CDN.
         merged = {key: val for key, val in headers.items() if key.lower() in {"referer", "user-agent"}}
         own_referer = explicit_referer
-        for name, content in _headers(row.get("headers")).items():
+        for name, content in valid_headers(row.get("headers")).items():
             merged = {key: val for key, val in merged.items() if key.lower() != name.lower()}
             merged[name] = content
             own_referer = own_referer or name.lower() == "referer"
@@ -215,7 +211,7 @@ def streams_from_payload(
     """
     output: list[Stream] = []
     seen: dict[tuple[str, tuple[tuple[str, str], ...]], Stream] = {}
-    initial_headers = _headers(headers)
+    initial_headers = valid_headers(headers)
 
     def walk(
         value: Any, inherited: Mapping[str, str], inherited_language: str | None,
@@ -232,12 +228,12 @@ def streams_from_payload(
             value = {"url": value}
         if not isinstance(value, Mapping):
             return
-        _check_protection(value)
+        check_protection(value)
         declared_language = str(value.get("language") or value.get("audio_type") or inherited_language or "").lower()
         if language and declared_language in {"sub", "dub"} and declared_language != language:
             return
         merged = dict(inherited)
-        for name, content in _headers(value.get("headers")).items():
+        for name, content in valid_headers(value.get("headers")).items():
             merged = {key: val for key, val in merged.items() if key.lower() != name.lower()}
             merged[name] = content
             explicit_referer = explicit_referer or name.lower() == "referer"
@@ -270,7 +266,7 @@ def streams_from_payload(
     return output
 
 
-class _MediaHTML(HTMLParser):
+class MediaHTML(HTMLParser):
     """Collect only explicit media tags and scripts that contain JSON data."""
 
     def __init__(self) -> None:
@@ -306,14 +302,16 @@ class _MediaHTML(HTMLParser):
             self._script = None
 
 
-def _embed_origin(url: str) -> tuple[str, str, int | None]:
+def url_origin(url: str) -> tuple[str, str, int | None]:
+    """``(scheme, host, port)``, with the default port filled in."""
     parsed = urlsplit(url)
     return parsed.scheme, parsed.hostname or "", parsed.port or (443 if parsed.scheme == "https" else 80)
 
 
-async def _fetch_page(client: httpx.AsyncClient, url: str, headers: dict[str, str]) -> httpx.Response:
-    origin = _embed_origin(url)
-    for redirect in range(_MAX_REDIRECTS + 1):
+async def fetch_page(client: httpx.AsyncClient, url: str, headers: dict[str, str]) -> httpx.Response:
+    """GET a page with only ``headers``, same-origin redirects and a size limit."""
+    origin = url_origin(url)
+    for redirect in range(MAX_REDIRECTS + 1):
         try:
             # Construct a fresh Request: catalog credentials must not be inherited
             # from a caller's default headers or cookies on a third-party embed.
@@ -321,10 +319,10 @@ async def _fetch_page(client: httpx.AsyncClient, url: str, headers: dict[str, st
             response = await client.send(request, follow_redirects=False, stream=True)
             try:
                 if response.status_code in {301, 302, 303, 307, 308}:
-                    target = _http_url(response.headers.get("location"), url)
-                    if target is None or _embed_origin(target) != origin:
+                    target = http_url(response.headers.get("location"), url)
+                    if target is None or url_origin(target) != origin:
                         raise ProviderError("Server redirect leaves its permitted origin")
-                    if redirect == _MAX_REDIRECTS:
+                    if redirect == MAX_REDIRECTS:
                         raise ProviderError("Server exceeded the redirect limit")
                     url = target
                     continue
@@ -336,7 +334,7 @@ async def _fetch_page(client: httpx.AsyncClient, url: str, headers: dict[str, st
                 body = bytearray()
                 async for chunk in response.aiter_bytes(chunk_size=65536):
                     body.extend(chunk)
-                    if len(body) > _MAX_PAGE_BYTES:
+                    if len(body) > MAX_PAGE_BYTES:
                         raise ProviderError("Server page exceeds the supported size limit")
                 # aiter_bytes has already decompressed the body. Do not ask the
                 # replacement Response to decompress it a second time.
@@ -354,24 +352,8 @@ async def _fetch_page(client: httpx.AsyncClient, url: str, headers: dict[str, st
     raise ProviderError("Server exceeded the redirect limit")
 
 
-def _zoko_payload(scripts: list[str]) -> Any | None:
-    for script in scripts:
-        match = re.search(r"\bwindow\.__P\s*=\s*([\"'])([A-Za-z0-9+/=]+)\1\s*;?", script)
-        if match is None:
-            continue
-        try:
-            encoded = base64.b64decode(match.group(2), validate=True)
-            decoded = bytes(value ^ _ZOKO_MASK[index % len(_ZOKO_MASK)] for index, value in enumerate(encoded))
-            payload = json.loads(decoded.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
-            raise ProviderError("ZokoAnime's published player payload format has changed or is invalid") from exc
-        if not isinstance(payload, dict):
-            raise ProviderError("ZokoAnime returned an unsupported player payload")
-        return payload
-    return None
-
-
-def _json_scripts(scripts: list[str]) -> list[Any]:
+def json_scripts(scripts: list[str]) -> list[Any]:
+    """JSON documents and literal ``sources`` arrays found in inline scripts."""
     output: list[Any] = []
     decoder = json.JSONDecoder()
     for script in scripts:
@@ -395,51 +377,3 @@ def _json_scripts(scripts: list[str]) -> list[Any]:
             except ValueError:
                 continue
     return output
-
-
-async def resolve_server(
-    client: httpx.AsyncClient,
-    url: str,
-    *,
-    referer: str,
-    user_agent: str,
-) -> list[Stream]:
-    """Resolve an allowlisted embed through its normal public source data."""
-    valid_url = _http_url(url, url)
-    if valid_url is None or urlsplit(valid_url).hostname not in _HOSTS:
-        raise ProviderError("Unsupported HiAnime server host")
-    parsed = urlsplit(valid_url)
-    if parsed.port not in (None, 80, 443):
-        raise ProviderError("Unsupported HiAnime server port")
-    request_headers = _headers({"Referer": referer, "User-Agent": user_agent})
-    request_headers["Accept"] = "text/html,application/json"
-    response = await _fetch_page(client, valid_url, request_headers)
-    text = response.text
-    if response.headers.get("cf-mitigated", "").lower() == "challenge" or _CHALLENGE.search(text):
-        raise ProviderError("Server requires a browser challenge; no bypass attempted")
-    if re.search(r"Error\s+Code\s*:\s*(?:<[^>]*>\s*)*410\b", text, re.IGNORECASE):
-        raise ProviderError("Server content was removed (Error Code 410)")
-    response_url = str(response.url)
-    media_headers = {"Referer": response_url, "User-Agent": user_agent}
-    streams: list[Stream] = []
-    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-    if content_type == "application/json" or text.lstrip().startswith(("{", "[")):
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise ProviderError("Server returned invalid JSON") from exc
-        streams = streams_from_payload(payload, response_url, media_headers, referrer_policy=True)
-    else:
-        parser = _MediaHTML()
-        parser.feed(text)
-        if parsed.hostname == "zokoanime.video":
-            payload = _zoko_payload(parser.scripts)
-            if payload is not None:
-                streams = streams_from_payload(payload, response_url, media_headers, referrer_policy=True)
-        if not streams:
-            streams = streams_from_payload(parser.rows, response_url, media_headers, referrer_policy=True)
-            for payload in _json_scripts(parser.scripts):
-                streams.extend(streams_from_payload(payload, response_url, media_headers, referrer_policy=True))
-    if not streams:
-        raise ProviderError("Server has no supported explicit media source; its player format may have changed")
-    return streams

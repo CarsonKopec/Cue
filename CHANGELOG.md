@@ -1,3 +1,89 @@
+# Cue 0.2.0: plugins, players and self-install — 2026-11-07
+
+- **Plugins.** A plugin is a folder of Python code (`plugin.toml` + `__init__.py`)
+  that adds providers, players, or both. Cue installs plugins from a catalog (an
+  `index.json` with checksums), from a link to a `.zip`, or from a `.zip` file or
+  folder. It shows the source and asks first. Plugins can be turned off, updated and
+  removed without restarting Cue.
+- **Plugins have their own repository**,
+  [cue-plugins](https://github.com/CarsonKopec/cue-plugins), sorted into `providers/`
+  and `players/`. Each push there rebuilds the catalog (the `catalog` release), which is
+  Cue's default.
+- **HiAnime and HydraHD are now plugins** (`anime`, `hydra`), so `cue.exe` ships
+  with Jellyfin and Local only. Their shared page-fetching and stream-parsing code is
+  now a public toolkit for plugin authors, `cue.providers.web`.
+- **Plugins menu** (`p` on the Home screen, or the command palette) with three tabs:
+  - Providers: status, turn on/off, choose the default, and a settings form each
+    provider describes, so Jellyfin and Local can be set up without editing TOML.
+  - Players: choose the player and set where its program is.
+  - Plugins: install, update, turn on/off, remove, add from file or link.
+
+  Edits keep the config file's comments and layout.
+- **Players from plugins.** `player = "<name>"` accepts any registered player;
+  `[players.<name>]` holds its options (`path` for every player). New plugins:
+  `ffplay` (FFmpeg's player, with resume position and any header) and `default-app`
+  (opens local files in the system's default video app on Windows, macOS or Linux).
+  `ProcessPlayer` makes wrapping other programs a few lines.
+- **`cue install` / `cue uninstall`.** `cue.exe` copies itself to
+  `%LOCALAPPDATA%\Programs\Cue`, adds that folder to the user's PATH and appears in
+  Settings → Apps, with no administrator rights. A downloaded `cue.exe` offers this
+  (or an update) on first run; *never* stops the question.
+- **`cue plugin`** list, catalog, install, update, remove, enable and disable.
+- `[providers.<name>] enabled = false` turns a provider off and keeps its settings.
+  A config table for a provider that isn't installed is reported, not silently
+  ignored.
+- tomli-w was replaced by tomlkit (which preserves comments). `cue.exe` now bundles
+  all of Cue and the standard-library modules plugins commonly need.
+
+Validation: **305 Cue tests and 316 cue-plugins tests passed**. Installed ffplay played a local file and
+an HTTP stream: it started at the resume point and sent the stream's Referer and
+User-Agent, and Cue reported a 404 as an error. The menu was checked in rendered
+screenshots. See [VALIDATION.md](VALIDATION.md).
+
+Remaining limits: plugins run with the user's own access (there's no sandbox), so
+Cue asks before installing and checks catalog checksums. The default catalog has
+not been published yet. Players Cue can't control (ffplay, the default app) have no
+auto-skip and save no resume point. Self-install is Windows-only; pip installs
+already put `cue` on PATH.
+
+# Cue cast-to-TV update — 2026-10-31
+
+- **Cast to a TV:** with `[cast] enabled = true`, Cue runs a DLNA media server on
+  the home network. Press **t** on the Episodes screen to cast the episodes (or a
+  typed range). VLC on an Xbox, or another DLNA player, lists them under Network →
+  Cue and plays them through Cue's relay.
+- The relay resolves each stream when the TV opens it and adds the source's
+  headers. It rewrites HLS playlists so every request goes through Cue. A
+  source's credentials go only to its own host.
+- Each episode's subtitles are added to the stream as named, language-tagged
+  tracks in VLC's subtitle menu.
+- Cue follows the parts of the video the TV fetches to save approximate resume
+  points and watched markers. The TV's episode list shows watched (✓) and
+  `(resume m:ss)`.
+- `http://<PC>:8770/now` opens the newest cast without the Network tab. Local
+  files are served with seeking (HTTP ranges).
+- **t** on Now Playing moves playback to the TV: the PC player stops, the
+  position is saved, and the current and following episodes are cast. On the
+  Episodes screen **t** and **d** now also work while the range box has focus.
+- `[cast] interface = "Ethernet"` (or `host = "<address>"`) chooses the network
+  adapter the TV uses. With either set, Cue listens only there; a missing adapter
+  is reported with the list of connected ones. `cue.log` records what the TV
+  requested.
+
+Validation: **565 tests passed**. On this PC, Cue answered a DLNA search on its
+network address. Real VLC 3.0.23 opened a cast through VLC's own DLNA client and
+played Breaking Bad S1E1 in 1080p. Seeking it to 15:00 saved a 14:48 resume point.
+See [VALIDATION.md](VALIDATION.md).
+
+Remaining limits: VLC 3 ignores playlist hints that turn subtitles on or start
+playback at a resume point. Subtitles come on automatically only when VLC's
+preferred subtitle language matches, and resuming means seeking on the TV.
+Auto-skip doesn't apply while casting. Not yet tried on a real Xbox.
+
+`dist/cue.exe` and `dist/cue-0.1.0-win64.zip` were rebuilt with casting (PyInstaller
+6.22.3). The exe's headless startup passed with the user configuration, and its
+cast server listened on the configured Ethernet adapter.
+
 # Cue HydraHD update — 2026-10-25
 
 - Added a `hydra` provider for HydraHD movies and TV. Each series season is its

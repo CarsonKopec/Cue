@@ -24,7 +24,7 @@ def _app(media_dir: Path, store: Store, tmp_path: Path, player_factory=None, **c
         store=store,
         http=offline,
         player_factory=player_factory,
-        plugin_dir=tmp_path / "no-plugins",
+        dropin_dir=tmp_path / "no-plugins",
     )
 
 
@@ -130,7 +130,7 @@ async def test_continue_watching_resumes(media_dir: Path, store: Store, tmp_path
 
 @pytest.mark.parametrize("player,label", [("vlc", "VLC"), ("mpv", "mpv")])
 async def test_missing_player_is_reported(media_dir: Path, store: Store, tmp_path: Path, monkeypatch, player, label) -> None:
-    monkeypatch.setattr(f"cue.app.find_{player}", lambda: None)
+    monkeypatch.setattr(f"cue.player.registry.find_{player}", lambda: None)
     app = _app(media_dir, store, tmp_path, player=player)
     async with app.run_test(size=(100, 30)) as pilot:
         provider = app.providers["local"]
@@ -152,8 +152,8 @@ async def test_configured_player_is_used(
         chosen.append(executable)
         return factory()
 
-    monkeypatch.setattr(f"cue.app.find_{player}", lambda: "selected-player")
-    monkeypatch.setattr(f"cue.app.{backend}", player_class)
+    monkeypatch.setattr(f"cue.player.registry.find_{player}", lambda: "selected-player")
+    monkeypatch.setattr(f"cue.player.{player}.{backend}", player_class)
     app = _app(media_dir, store, tmp_path, player=player, auto_next=False)
     async with app.run_test(size=(100, 30)) as pilot:
         provider = app.providers["local"]

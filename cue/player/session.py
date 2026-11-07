@@ -67,6 +67,7 @@ class PlaybackSession:
         auto_next: bool = True,
         quality: str = "best",
         player_args: Sequence[str] = (),
+        player_note: str = "",  # shown while playing, for players Cue can't control
     ) -> None:
         self.provider_name = provider_name
         self.provider = provider
@@ -82,6 +83,7 @@ class PlaybackSession:
         self.auto_next = auto_next
         self.quality = quality
         self.player_args = list(player_args)
+        self.player_note = player_note
         self.state = PlaybackState(show)
         self.listener: Callable[[PlaybackState], None] | None = None
         self._player_factory = player_factory
@@ -249,7 +251,7 @@ class PlaybackSession:
             return self._fail(str(exc))
 
         self._last_saved = start or 0.0
-        self._message(f"Resumed at {format_time(start)}" if start else "")
+        self._message(self.player_note or (f"Resumed at {format_time(start)}" if start else ""))
         self._spawn(self._load_skip(generation, episode))
         self._spawn(self._load_subtitles(generation, episode, stream))
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from rich.text import Text
 from textual.binding import Binding
-from textual.widgets import DataTable, OptionList, Static
+from textual.widgets import DataTable, Input, OptionList, Static
 
 if TYPE_CHECKING:
     from cue.app import CueApp
@@ -33,6 +33,19 @@ class EpisodeGrid(DataTable):
         Binding("h", "cursor_left", show=False),
         Binding("l", "cursor_right", show=False),
     ]
+
+
+class RangeInput(Input):
+    """The episode range box. It takes only the characters a range can contain, so
+    letter keys such as ``d`` (download) and ``t`` (cast) still reach the screen."""
+
+    ALLOWED = "0123456789.-, "
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(restrict=r"[0-9.,\- ]*", **kwargs)
+
+    def check_consume_key(self, key: str, character: str | None) -> bool:
+        return character is not None and character in self.ALLOWED
 
 
 class StatusBar(Static):

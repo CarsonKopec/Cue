@@ -14,7 +14,7 @@ from cue.providers.base import Episode, ProviderError, Show
 from cue.screens import CueScreen
 from cue.selection import SelectionError, parse_episode_range
 from cue.util import format_time
-from cue.widgets import EpisodeGrid, StatusBar
+from cue.widgets import EpisodeGrid, RangeInput, StatusBar
 
 CELL_WIDTH = 9  # characters per grid cell, padding included
 
@@ -22,7 +22,9 @@ CELL_WIDTH = 9  # characters per grid cell, padding included
 class EpisodesScreen(CueScreen):
     BINDINGS = [
         Binding("slash", "focus_range", "Range"),
-        Binding("d", "download", "Download"),
+        # Priority: they also work while the range box (which takes no letters) has focus.
+        Binding("d", "download", "Download", priority=True),
+        Binding("t", "cast", "Cast to TV", priority=True),
         Binding("b", "toggle_audio", "SUB/DUB"),
         Binding("q", "back", "Back"),
         Binding("escape", "focus_grid", show=False),
@@ -49,7 +51,7 @@ class EpisodesScreen(CueScreen):
                     allow_blank=False,
                     id="audio-mode",
                 )
-            yield Input(placeholder="Episodes: 3 · 1-5 · -1 (latest) · 1-3,7   Enter plays, d downloads", id="range")
+            yield RangeInput(placeholder="Episodes: 3 · 1-5 · -1 (latest) · 1-3,7   Enter plays, d downloads, t casts", id="range")
             yield LoadingIndicator()
             yield EpisodeGrid(id="grid", show_header=False, cursor_type="cell")
             yield Static("", id="detail", classes="hint")
@@ -215,6 +217,17 @@ class EpisodesScreen(CueScreen):
             chosen = [highlighted] if highlighted else []
         if chosen:
             self.cue.download(self.provider_name, self.show, chosen)
+
+    def action_cast(self) -> None:
+        """Cast the typed range, or every episode, so the TV can pick and play them in order."""
+        try:
+            chosen = self._selection()
+        except SelectionError as exc:
+            self.notify(str(exc), severity="warning")
+            return
+        chosen = chosen if chosen is not None else list(self.episodes)
+        if chosen:
+            self.cue.cast(self.provider_name, self.show, chosen)
 
     # -- resume ----------------------------------------------------------------
 

@@ -9,8 +9,10 @@ Cue looks for mpv next to ``cue.exe`` first, then on PATH.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -37,6 +39,8 @@ def main() -> int:
             check=True,
         )
     subprocess.run([str(exe), "--version"], check=True)
+    with tempfile.TemporaryDirectory() as home:  # a start-up check that can't touch real settings
+        subprocess.run([str(exe), "--smoke-test"], check=True, env={**os.environ, "CUE_HOME": home})
 
     archive = ROOT / "dist" / f"cue-{__version__}-win64.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:

@@ -45,8 +45,10 @@ def test_player_selection_and_legacy_config() -> None:
     # to translate while using the new VLC default.
     config = parse_config({"player_args": ["--fs"]})
     assert config.player == "vlc" and config.player_args == ["--fs"]
+    # Plugins can add players, so any player name is accepted here; Cue checks it when playing.
+    assert parse_config({"player": "ffplay"}).player == "ffplay"
     with pytest.raises(ConfigError, match="player must"):
-        parse_config({"player": "unknown"})
+        parse_config({"player": "not a player"})
     with pytest.raises(ConfigError, match="player has the wrong type"):
         parse_config({"player": 1})
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 def format_number(number: float) -> str:
@@ -65,6 +65,24 @@ class Stream:
     subtitle_tracks: list[StreamSubtitle] | None = None
 
 
+@dataclass(frozen=True)
+class Setting:
+    """One key of a provider's ``[providers.<name>]`` table, as the settings form shows it.
+
+    ``kind`` is ``text``, ``secret`` (hidden while typing), ``number``, ``bool``,
+    ``choice`` (one of ``choices``) or ``folders`` (one or more paths; several are
+    stored as a list).
+    """
+
+    key: str
+    label: str
+    kind: str = "text"
+    default: Any = ""
+    choices: tuple[str, ...] = ()
+    help: str = ""
+    required: bool = False
+
+
 class ProviderError(Exception):
     """A provider could not talk to its source or find what was asked for."""
 
@@ -81,6 +99,8 @@ class Provider(Protocol):
     raise :class:`ProviderConfigError` when it is incomplete. They may also define
     ``async def aclose()``, which is called when Cue exits.
     Set ``skip_supported = False`` to opt out of anime-specific skip lookups.
+    Optional ``title`` (a display name) and ``settings`` (a tuple of :class:`Setting`)
+    let the Plugins menu show the provider and edit its table.
     """
 
     name: str
