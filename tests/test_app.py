@@ -40,10 +40,11 @@ async def test_home_shows_setup_problems(media_dir: Path, store: Store, tmp_path
     app = _app(media_dir, store, tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         assert isinstance(app.screen, HomeScreen)
-        assert app.provider_name == "local"  # jellyfin is the default but not set up
+        # jellyfin is the old default provider but isn't set up, so Cue starts in local's first group.
+        assert (app.group.name, app.group.providers) == ("shows", ("local",))
         assert "jellyfin: set url and api_key" in app.setup_hint()
         await pilot.press("tab")
-        assert app.provider_name == "local"
+        assert app.group.name == "anime"
         await pilot.press("escape", "a")
         assert app.auto_skip is False
 

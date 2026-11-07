@@ -114,9 +114,12 @@ def _load_dropin(path: Path) -> None:
         log.exception("Could not load provider plug-in %s", path)
 
 
+CUE_KEYS = {"enabled", "groups"}  # read by Cue itself, not passed to the provider
+
+
 def provider_options(table: Mapping[str, Any]) -> dict[str, Any]:
-    """A config table without Cue's own ``enabled`` key: what the provider is made with."""
-    return {key: value for key, value in table.items() if key != "enabled"}
+    """A config table without Cue's own keys (``enabled``, ``groups``): what the provider is made with."""
+    return {key: value for key, value in table.items() if key not in CUE_KEYS}
 
 
 def is_enabled(options: Mapping[str, Any]) -> bool:

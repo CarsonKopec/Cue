@@ -20,6 +20,8 @@ from cue.config import Change, Config, ConfigError, config_path, db_path, edit_c
 from cue.config import dropin_dir as default_dropin_dir
 from cue.config import plugins_dir as default_plugins_dir
 from cue.download import DownloadError, download
+from cue.groups import Group, single
+from cue.groups import build as build_groups
 from cue.player.base import Player
 from cue.player.registry import players as player_backends
 from cue.player.session import PlaybackSession
@@ -99,7 +101,7 @@ class CueApp(App[None]):
     #np-message {
         margin-top: 1;
     }
-    SubtitlePicker, ConfirmDialog, AddPluginDialog, ProviderSettingsDialog {
+    SubtitlePicker, ConfirmDialog, AddPluginDialog, ProviderSettingsDialog, GroupDialog, NewGroupDialog {
         align: center middle;
     }
     .dialog {
@@ -131,14 +133,18 @@ class CueApp(App[None]):
     #plugins-view TabPane {
         padding: 0;
     }
-    #provider-table, #player-table, #plugin-table {
+    #provider-table, #group-table, #player-table, #plugin-table {
         height: 1fr;
         margin-top: 1;
     }
-    #provider-detail, #player-detail, #plugin-detail {
+    #provider-detail, #group-detail, #player-detail, #plugin-detail {
         height: auto;
         min-height: 2;
         margin-top: 1;
+    }
+    #group-members {
+        height: auto;
+        max-height: 12;
     }
     .warning {
         color: $warning;
@@ -160,7 +166,7 @@ class CueApp(App[None]):
     }
     """
     BINDINGS = [
-        Binding("tab", "switch_provider", "Provider", priority=True),
+        Binding("tab", "switch_group", "Group", priority=True),
         Binding("a", "toggle_auto_skip", "Auto-skip"),
     ]
 
@@ -175,6 +181,7 @@ class CueApp(App[None]):
         plugin_root: Path | None = None,
         initial_query: str | None = None,
         provider: str | None = None,
+        group: str | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -193,11 +200,19 @@ class CueApp(App[None]):
         self._provider_options = {name: provider_options(config.providers.get(name, {})) for name in self.providers}
         self._retired: list[Provider] = []  # replaced providers; a playing episode may still use one
         self.catalog: list[CatalogEntry] | None = None  # loaded by the Plugins menu
-        self.provider_name = self._initial_provider(provider)
+        self.groups: list[Group] = []
+        self.group: Group | None = None  # what searches cover
         self.auto_skip = config.auto_skip
         self.status_message = ""
-        if provider and provider not in self.providers:
-            self.status_message = f"provider {provider!r} is not available"
+        self._build_groups()
+        if provider:
+            if provider in self.providers:
+                self.group = single(provider)
+            else:
+                self.status_message = f"provider {provider!r} is not available"
+        elif group:
+            if not self._choose_group(group):
+                self.status_message = f"group {group!r} has no providers that are set up"
         self.skip = SkipEngine(self.http, self.store)
         api_key = config.subtitles.opensubtitles_api_key
         self.subtitles = (
@@ -212,11 +227,28 @@ class CueApp(App[None]):
         self._audio_modes: dict[str, str] = {}
         self.cast_server: CastServer | None = None
 
-    def _initial_provider(self, requested: str | None) -> str | None:
-        for name in (requested, self.config.default_provider):
-            if name in self.providers:
-                return name
-        return next(iter(self.providers), None)
+    def _build_groups(self) -> None:
+        """Work out the groups from the ready providers, keeping the current one if it still exists."""
+        self.groups = build_groups(self.providers, self.config.providers, self.config.groups)
+        current = self.group
+        if current is not None and current.name.startswith("provider:"):
+            if current.providers[0] in self.providers:
+                return  # cue -p <provider> keeps its one provider
+            current = None
+        if current is None or not self._choose_group(current.name):
+            self.group = None
+            # Older configs name a default provider: start in its first group.
+            fallback = next((g.name for g in self.groups if self.config.default_provider in g.providers), "")
+            for name in (self.config.default_group, fallback):
+                if name and self._choose_group(name):
+                    return
+            self.group = self.groups[0] if self.groups else None
+
+    def _choose_group(self, name: str) -> bool:
+        found = next((group for group in self.groups if group.name == name), None)
+        if found is not None:
+            self.group = found
+        return found is not None
 
     def get_default_screen(self) -> Screen[None]:
         return HomeScreen(initial_query=self._initial_query)
@@ -241,10 +273,6 @@ class CueApp(App[None]):
 
     # -- status ----------------------------------------------------------------
 
-    @property
-    def provider(self) -> Provider | None:
-        return self.providers.get(self.provider_name) if self.provider_name else None
-
     def setup_hint(self) -> str:
         lines = []
         if not self.providers:
@@ -258,14 +286,15 @@ class CueApp(App[None]):
             for bar in screen.query(StatusBar):
                 bar.refresh()
 
-    def action_switch_provider(self) -> None:
-        names = list(self.providers)
-        if not names:
+    def action_switch_group(self) -> None:
+        if not self.groups:
             self.set_status("no providers configured")
             return
-        position = names.index(self.provider_name) + 1 if self.provider_name in names else 0
-        self.provider_name = names[position % len(names)]
-        self.set_status(f"searching {self.provider_name}")
+        names = [group.name for group in self.groups]
+        current = self.group.name if self.group else None
+        position = names.index(current) + 1 if current in names else 0
+        self.group = self.groups[position % len(self.groups)]
+        self.set_status(f"searching {self.group.title}")
 
     def action_toggle_auto_skip(self) -> None:
         self.auto_skip = not self.auto_skip
@@ -301,17 +330,16 @@ class CueApp(App[None]):
         self._retired += [provider for name, provider in self.providers.items() if ready.get(name) is not provider]
         self.providers = ready
         self._provider_options = {name: provider_options(self.config.providers.get(name, {})) for name in ready}
-        if self.provider_name not in self.providers:
-            self.provider_name = self._initial_provider(None)
+        self._build_groups()
         self.set_status(self.status_message)
 
     # -- routing -----------------------------------------------------------------
 
     def open_results(self, query: str) -> None:
-        if self.provider_name is None:
+        if self.group is None:
             self.notify(self.setup_hint() or "No providers configured.", severity="warning", timeout=8)
             return
-        self.push_screen(ResultsScreen(self.provider_name, query))
+        self.push_screen(ResultsScreen(self.group, query))
 
     def open_plugins(self) -> None:
         self.push_screen(PluginsScreen())

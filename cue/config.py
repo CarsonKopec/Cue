@@ -87,7 +87,8 @@ class PluginsConfig:
 
 @dataclass
 class Config:
-    default_provider: str = "jellyfin"
+    default_provider: str = "jellyfin"  # older configs; default_group replaced it
+    default_group: str = ""  # the group searches start in; empty: the first one
     auto_skip: bool = True
     auto_next: bool = True
     quality: str = "best"
@@ -95,6 +96,7 @@ class Config:
     player_args: list[str] = field(default_factory=list)
     download_dir: str = ""
     providers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    groups: dict[str, dict[str, Any]] = field(default_factory=dict)  # [groups.<name>]: title, media
     players: dict[str, dict[str, Any]] = field(default_factory=dict)  # [players.<name>] options
     subtitles: SubtitleConfig = field(default_factory=SubtitleConfig)
     cast: CastConfig = field(default_factory=CastConfig)
@@ -180,6 +182,15 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
         if not isinstance(section, dict):
             raise ConfigError(f"[providers.{name}] must be a table")
         _get(section, "enabled", bool, True, f"providers.{name}.")
+        if "groups" in section:
+            _str_list(section, "groups", [], f"providers.{name}.")
+    groups = _get(document, "groups", dict, {}, "")
+    for name, section in groups.items():
+        if not isinstance(section, dict) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", name):
+            raise ConfigError(f"[groups.{name}] must be a table named with lowercase letters, digits, - or _")
+        _get(section, "title", str, "", f"groups.{name}.")
+        if section.get("media", "any") not in ("movie", "series", "any"):
+            raise ConfigError(f"groups.{name}.media must be 'movie', 'series' or 'any'")
     players = _get(document, "players", dict, {}, "")
     for name, section in players.items():
         if not isinstance(section, dict):
@@ -200,6 +211,8 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
 
     return Config(
         default_provider=_get(document, "default_provider", str, defaults.default_provider, ""),
+        default_group=_get(document, "default_group", str, "", "").strip().lower(),
+        groups={name: dict(section) for name, section in groups.items()},
         auto_skip=_get(document, "auto_skip", bool, defaults.auto_skip, ""),
         auto_next=_get(document, "auto_next", bool, defaults.auto_next, ""),
         quality=str(_get(document, "quality", (str, int), defaults.quality, "")),
@@ -318,9 +331,37 @@ def set_provider_enabled(name: str, enabled: bool) -> Change:
     return change
 
 
-def set_default_provider(name: str) -> Change:
+def set_default_group(name: str) -> Change:
     def change(document: tomlkit.TOMLDocument) -> None:
-        document["default_provider"] = name
+        document["default_group"] = name
+    return change
+
+
+def set_provider_groups(name: str, groups: list[str], *, exists: bool) -> Change:
+    """Put a provider in exactly ``groups``. A provider without a table yet gets one that
+    stays off (``enabled = false``), so choosing its groups doesn't turn it on."""
+    values: dict[str, Any] = {"groups": list(groups)}
+    if not exists:
+        values["enabled"] = False
+    return _set_options("providers", name, values)
+
+
+def set_group_title(name: str, title: str) -> Change:
+    return _set_options("groups", name, {"title": title})
+
+
+def remove_group(name: str) -> Change:
+    """Delete ``[groups.<name>]`` and take the group out of every provider's list."""
+    def change(document: tomlkit.TOMLDocument) -> None:
+        if "groups" in document and name in document["groups"]:
+            del document["groups"][name]
+            if not document["groups"]:
+                del document["groups"]
+        for table in document.get("providers", {}).values():
+            if name in table.get("groups", []):
+                table["groups"] = [group for group in table["groups"] if group != name]
+        if document.get("default_group") == name:
+            del document["default_group"]
     return change
 
 

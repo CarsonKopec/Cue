@@ -44,7 +44,7 @@ class HomeScreen(CueScreen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="home", classes="view"):
-            yield Input(placeholder="Search…  (Enter searches, Tab switches provider)", id="search")
+            yield Input(placeholder="Search…  (Enter searches, Tab switches group)", id="search")
             yield Label("Continue Watching", classes="section")
             yield VimOptionList(id="continue")
             yield Static("", id="home-hint", classes="hint")

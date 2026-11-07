@@ -100,7 +100,10 @@ class Provider(Protocol):
     ``async def aclose()``, which is called when Cue exits.
     Set ``skip_supported = False`` to opt out of anime-specific skip lookups.
     Optional ``title`` (a display name) and ``settings`` (a tuple of :class:`Setting`)
-    let the Plugins menu show the provider and edit its table.
+    let the Plugins menu show the provider and edit its table. ``groups`` names the
+    search groups it belongs to by default (``"movies"``, ``"shows"``, ``"anime"`` or
+    another name); set ``mixed_media = True`` when search returns both movies and
+    series, marked by ``Show.media_type``, so Movies and Shows each get their own.
     """
 
     name: str

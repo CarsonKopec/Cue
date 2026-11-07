@@ -96,8 +96,6 @@ async def test_providers_and_players_tabs(setup, store: Store, tmp_path: Path, c
         assert _saved(config)["providers"]["local"]["enabled"] is False and "local" not in app.providers
         await pilot.press("space")
         assert "enabled" not in _saved(config)["providers"]["local"] and "local" in app.providers
-        await pilot.press("d")
-        assert _saved(config)["default_provider"] == "local" and app.provider_name == "local"
 
         _select(screen, "#provider-table", screen._provider_rows, "jellyfin")
         await pilot.press("enter")
@@ -116,7 +114,7 @@ async def test_providers_and_players_tabs(setup, store: Store, tmp_path: Path, c
         assert "jellyfin" in app.providers and "user_id" not in saved["providers"]["jellyfin"]
         assert config.read_text(encoding="utf-8").startswith("# my settings")
 
-        await pilot.press("right")
+        await pilot.press("right", "right")  # past Groups
         assert screen.query_one(TabbedContent).active == PLAYERS
         _select(screen, "#player-table", screen._player_rows, "mpv")
         await pilot.press("d")

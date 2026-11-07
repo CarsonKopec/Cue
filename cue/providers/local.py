@@ -169,6 +169,7 @@ def _resolution(quality: str | None) -> int:
 class LocalProvider:
     name = "local"
     title = "Local folders"
+    groups = ("shows", "anime")
     settings = (
         Setting("path", "Media folders", "folders", required=True, help="Separate several folders with ;"),
     )

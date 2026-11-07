@@ -41,6 +41,7 @@ def _quality(source: Mapping[str, Any]) -> str | None:
 class JellyfinProvider:
     name = "jellyfin"
     title = "Jellyfin"
+    groups = ("shows", "anime")  # it searches series
     settings = (
         Setting("url", "Server address", required=True, help="Such as http://192.168.1.10:8096"),
         Setting("api_key", "API key", "secret", required=True, help="Create one in Dashboard → API Keys."),

@@ -49,7 +49,7 @@ class RangeInput(Input):
 
 
 class StatusBar(Static):
-    """Current provider, auto-skip/auto-next state and the latest message."""
+    """Current search group, auto-skip/auto-next state and the latest message."""
 
     DEFAULT_CSS = """
     StatusBar {
@@ -63,7 +63,10 @@ class StatusBar(Static):
     def render(self) -> Text:
         app: CueApp = self.app  # type: ignore[assignment]
         text = Text()
-        text.append(f"▸ {app.provider_name or 'no provider'}", style="bold")
+        group = app.group
+        text.append(f"▸ {group.title if group else 'no providers'}", style="bold")
+        if group is not None and (len(group.providers) > 1 or group.title != group.providers[0]):
+            text.append(f" ({', '.join(group.providers)})", style="dim")
         text.append(f"  │  auto-skip {'on' if app.auto_skip else 'off'}")
         text.append(f"  │  auto-next {'on' if app.config.auto_next else 'off'}")
         if app.status_message:

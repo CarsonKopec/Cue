@@ -1,4 +1,4 @@
-"""Plugins, providers and players: turn providers on or off, pick a player, install plugins."""
+"""Plugins, providers, groups and players: set providers up, group them, pick a player, install plugins."""
 
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, DataTable, Footer, Header, Input, Label, Select, Static, Switch, TabbedContent, TabPane,
+    Button, DataTable, Footer, Header, Input, Label, Select, SelectionList, Static, Switch, TabbedContent, TabPane,
 )
 
 from cue.config import (
-    set_default_provider, set_player, set_player_options, set_plugin_disabled, set_provider_enabled,
-    set_provider_options,
+    remove_group, set_default_group, set_group_title, set_player, set_player_options, set_plugin_disabled,
+    set_provider_enabled, set_provider_groups, set_provider_options,
 )
+from cue.groups import ALL, NAME, Group, definitions, provider_groups, slug
 from cue.player.registry import PATH_SETTING, player_origin, players
 from cue.plugins import CatalogEntry, InstalledPlugin, Manifest, PluginError, fetch_catalog
 from cue.plugins.actions import WARNING, Source, after_install, after_remove, fetch, find_source, updates
@@ -27,8 +28,8 @@ from cue.providers.base import Setting
 from cue.screens import CueScreen
 from cue.widgets import StatusBar
 
-PROVIDERS, PLAYERS, PLUGINS = "providers-tab", "players-tab", "plugins-tab"
-TABS = [PROVIDERS, PLAYERS, PLUGINS]
+PROVIDERS, GROUPS, PLAYERS, PLUGINS = "providers-tab", "groups-tab", "players-tab", "plugins-tab"
+TABS = [PROVIDERS, GROUPS, PLAYERS, PLUGINS]
 
 
 # -- dialogs ------------------------------------------------------------------------
@@ -204,6 +205,72 @@ class ProviderSettingsDialog(ModalScreen[dict[str, Any] | None]):
         return text
 
 
+class NewGroupDialog(ModalScreen[str | None]):
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="dialog"):
+            yield Label("New group", classes="section")
+            yield Static("A name for it, such as Kids or Documentaries. Next you choose its providers.",
+                         classes="hint")
+            yield Input(placeholder="Group name", id="group-name")
+
+    def on_mount(self) -> None:
+        self.query_one("#group-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class GroupDialog(ModalScreen[tuple[str, list[str]] | None]):
+    """A group's title and which providers are in it; returns both."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+s", "save", "Save"),
+    ]
+
+    def __init__(self, group: Group, choices: list[tuple[str, str, bool]]) -> None:
+        super().__init__()
+        self._group = group
+        self._choices = choices  # (label, provider name, in the group now)
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="dialog"):
+            yield Label(f"{self._group.title} group", classes="section")
+            yield Label("Title", classes="field")
+            yield Input(value=self._group.title, id="group-title")
+            yield Label("Providers in this group", classes="field")
+            yield SelectionList[str](*self._choices, id="group-members")
+            yield Static("Space ticks or unticks a provider. A provider can be in several groups.", classes="hint")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Save", variant="primary", id="save")
+
+    def on_mount(self) -> None:
+        self.query_one("#group-members", SelectionList).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self.action_save()
+        else:
+            self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.action_save()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        title = self.query_one("#group-title", Input).value.strip() or self._group.title
+        self.dismiss((title, list(self.query_one("#group-members", SelectionList).selected)))
+
+
 # -- the screen ---------------------------------------------------------------------
 
 
@@ -219,7 +286,11 @@ class PluginsScreen(CueScreen):
         # Providers tab
         Binding("enter", "settings", "Settings", priority=True),
         Binding("space", "toggle_provider", "On/off"),
-        Binding("d", "make_default", "Default"),
+        # Groups tab
+        Binding("enter", "edit_group", "Edit", priority=True),
+        Binding("d", "default_group", "Start here"),
+        Binding("n", "new_group", "New group"),
+        Binding("x,delete", "remove_group", "Remove"),
         # Players tab
         Binding("enter", "player_settings", "Settings", priority=True),
         Binding("d", "use_player", "Use this player"),
@@ -231,13 +302,15 @@ class PluginsScreen(CueScreen):
         Binding("r", "reload_catalog", "Refresh"),
         Binding("q,escape", "back", "Back"),
     ]
-    PROVIDER_ACTIONS = {"settings", "toggle_provider", "make_default"}
+    PROVIDER_ACTIONS = {"settings", "toggle_provider"}
+    GROUP_ACTIONS = {"edit_group", "default_group", "new_group", "remove_group"}
     PLAYER_ACTIONS = {"player_settings", "use_player"}
     PLUGIN_ACTIONS = {"install", "toggle_plugin", "add", "remove", "reload_catalog"}
 
     def __init__(self) -> None:
         super().__init__()
         self._provider_rows: list[str] = []
+        self._group_rows: list[Group] = []
         self._player_rows: list[str] = []
         self._plugin_rows: list[str] = []
         self._catalog_note = ""
@@ -248,6 +321,9 @@ class PluginsScreen(CueScreen):
             with TabPane("Providers", id=PROVIDERS):
                 yield DataTable(id="provider-table", cursor_type="row", zebra_stripes=True)
                 yield Static("", id="provider-detail", classes="hint")
+            with TabPane("Groups", id=GROUPS):
+                yield DataTable(id="group-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="group-detail", classes="hint")
             with TabPane("Players", id=PLAYERS):
                 yield DataTable(id="player-table", cursor_type="row", zebra_stripes=True)
                 yield Static("", id="player-detail", classes="hint")
@@ -258,8 +334,9 @@ class PluginsScreen(CueScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sub_title = "Plugins, providers and players"
-        self.query_one("#provider-table", DataTable).add_columns("Provider", "From", "Status")
+        self.sub_title = "Plugins, providers, groups and players"
+        self.query_one("#provider-table", DataTable).add_columns("Provider", "From", "Groups", "Status")
+        self.query_one("#group-table", DataTable).add_columns("Group", "Providers", "Status")
         self.query_one("#player-table", DataTable).add_columns("Player", "From", "Status")
         self.query_one("#plugin-table", DataTable).add_columns("Plugin", "Version", "Adds", "Status")
         self.refresh_tables()
@@ -276,6 +353,8 @@ class PluginsScreen(CueScreen):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action in self.PROVIDER_ACTIONS:
             return self._tab == PROVIDERS
+        if action in self.GROUP_ACTIONS:
+            return self._tab == GROUPS
         if action in self.PLAYER_ACTIONS:
             return self._tab == PLAYERS
         if action in self.PLUGIN_ACTIONS:
@@ -284,7 +363,8 @@ class PluginsScreen(CueScreen):
 
     @on(TabbedContent.TabActivated)
     def _tab_changed(self, event: TabbedContent.TabActivated) -> None:
-        table_id = {PROVIDERS: "#provider-table", PLAYERS: "#player-table"}.get(event.pane.id, "#plugin-table")
+        table_id = {PROVIDERS: "#provider-table", GROUPS: "#group-table", PLAYERS: "#player-table"}.get(
+            event.pane.id, "#plugin-table")
         self.query_one(table_id, DataTable).focus()
         self.refresh_bindings()
 
@@ -342,8 +422,7 @@ class PluginsScreen(CueScreen):
     def _provider_status(self, name: str) -> Text:
         table = self.cue.config.providers.get(name)
         if name in self.cue.providers:
-            default = name == self.cue.config.default_provider
-            return Text("● ready · default" if default else "ready", style="green")
+            return Text("ready", style="green")
         if origin_of(name) is None:
             owner = next((p for p in self.cue.plugins.plugins() if name in p.manifest.providers), None)
             if owner is not None and not owner.enabled:
@@ -374,9 +453,33 @@ class PluginsScreen(CueScreen):
             label = Text(title, style="bold")
             if title != name:
                 label.append(f"  {name}", style="dim")
-            providers_table.add_row(label, self._provider_source(name), self._provider_status(name))
+            groups = ", ".join(self._group_title(group) for group in self._groups_of(name))
+            providers_table.add_row(label, self._provider_source(name), groups or Text("none", style="dim"),
+                                    self._provider_status(name))
         if keep in self._provider_rows:
             providers_table.move_cursor(row=self._provider_rows.index(keep))
+
+        group_table = self.query_one("#group-table", DataTable)
+        keep_group = self._selected_group()
+        group_table.clear()
+        self._group_rows = self._all_groups()
+        start = self.cue.config.default_group or (self.cue.groups[0].name if self.cue.groups else "")
+        for group in self._group_rows:
+            members = self._members(group)
+            ready = [name for name in members if name in self.cue.providers]
+            cell = Text(", ".join(ready))
+            for name in members:
+                if name not in ready:
+                    cell.append(f"{', ' if len(cell) else ''}{name} (off)", style="dim")
+            if group.name == start:
+                status = Text("● start here", style="green")
+            elif not ready:
+                status = Text("empty: not in Tab", style="dim")
+            else:
+                status = Text("")
+            group_table.add_row(Text(group.title, style="bold"), cell, status)
+        if keep_group is not None and keep_group.name in [group.name for group in self._group_rows]:
+            group_table.move_cursor(row=[group.name for group in self._group_rows].index(keep_group.name))
 
         player_table = self.query_one("#player-table", DataTable)
         keep = self._selected("#player-table", self._player_rows)
@@ -422,8 +525,21 @@ class PluginsScreen(CueScreen):
         lines = []
         if name and name in self.cue.provider_problems and name not in self.cue.providers:
             lines.append(self.cue.provider_problems[name])
-        lines.append("Enter edits settings · Space turns it on or off · d makes it the default for searches")
+        lines.append("Enter edits settings · Space turns it on or off · the Groups tab says where it's searched")
         self.query_one("#provider-detail", Static).update("\n".join(lines) if cls or name else "")
+
+        group = self._selected_group()
+        lines = []
+        if group is not None:
+            if group.name == ALL:
+                lines.append("Searches every provider that's ready.")
+            elif group.media == "movie":
+                lines.append("Providers that also list series show only their movies here.")
+            elif group.media == "series":
+                lines.append("Providers that also list movies show only their series here.")
+        lines.append("Tab on the Home screen switches between groups.")
+        lines.append("Enter picks its providers · d starts searches here · n makes a new group · x removes one")
+        self.query_one("#group-detail", Static).update("\n".join(lines))
 
         name = self._selected("#player-table", self._player_rows)
         lines = []
@@ -496,17 +612,107 @@ class PluginsScreen(CueScreen):
                 self._report(name)
             self.refresh_tables()
 
-    def action_make_default(self) -> None:
-        name = self._selected("#provider-table", self._provider_rows)
-        if name is None:
+    # -- groups ---------------------------------------------------------------------
+
+    def _groups_of(self, provider: str) -> list[str]:
+        return provider_groups(discover().get(provider), self.cue.config.providers.get(provider, {}))
+
+    def _all_groups(self) -> list[Group]:
+        """Every group, empty ones too, then All."""
+        referenced = [group for name in self._provider_names() for group in self._groups_of(name)]
+        return [*definitions(self.cue.config.groups, referenced), Group(ALL, "All", built_in=True)]
+
+    def _group_title(self, name: str) -> str:
+        return next((group.title for group in self._all_groups() if group.name == name), name)
+
+    def _members(self, group: Group) -> list[str]:
+        if group.name == ALL:
+            return list(self.cue.providers)
+        return [name for name in self._provider_names() if group.name in self._groups_of(name)]
+
+    def _selected_group(self) -> Group | None:
+        table = self.query_one("#group-table", DataTable)
+        rows = self._group_rows
+        return rows[table.cursor_row] if table.row_count and 0 <= table.cursor_row < len(rows) else None
+
+    def action_edit_group(self) -> None:
+        group = self._selected_group()
+        if group is None:
             return
-        if name not in self.cue.providers:
-            self.notify(f"Set {name} up first; it isn't ready.", severity="warning")
+        if group.name == ALL:
+            self.notify("All always searches every ready provider.")
             return
-        if self.cue.update_config(set_default_provider(name)):
-            self.cue.provider_name = name
-            self.cue.set_status(f"searching {name}")
-            self.refresh_tables()
+        self.edit_group(group)
+
+    def edit_group(self, group: Group) -> None:
+        classes = discover()
+        names = self._provider_names()
+        choices = []
+        for name in names:
+            title = getattr(classes.get(name), "title", "") or name
+            label = title if name in self.cue.providers else f"{title} (not ready)"
+            choices.append((label, name, group.name in self._groups_of(name)))
+
+        def saved(result: tuple[str, list[str]] | None) -> None:
+            if result is None:
+                return
+            title, chosen = result
+            changes = []
+            if title != group.title:
+                changes.append(set_group_title(group.name, title))
+            for name in names:
+                current = self._groups_of(name)
+                if (name in chosen) != (group.name in current):
+                    wanted = [*current, group.name] if name in chosen else [g for g in current if g != group.name]
+                    changes.append(set_provider_groups(name, wanted, exists=name in self.cue.config.providers))
+            if changes and self.cue.update_config(*changes):
+                self.refresh_tables()
+
+        self.app.push_screen(GroupDialog(group, choices), saved)
+
+    def action_default_group(self) -> None:
+        group = self._selected_group()
+        if group is None or not self.cue.update_config(set_default_group(group.name)):
+            return
+        if self.cue._choose_group(group.name):
+            self.cue.set_status(f"searching {group.title}")
+        else:
+            self.notify(f"{group.title} has no ready providers yet, so searches start elsewhere for now.")
+        self.refresh_tables()
+
+    def action_new_group(self) -> None:
+        def named(title: str | None) -> None:
+            if not title:
+                return
+            name = slug(title)
+            if not NAME.fullmatch(name) or name == ALL:
+                self.notify("Use a name with letters in it, other than All.", severity="warning")
+                return
+            existing = next((group for group in self._all_groups() if group.name == name), None)
+            if existing is not None:
+                self.notify(f"There's already a {existing.title} group.", severity="warning")
+                return
+            if self.cue.update_config(set_group_title(name, title)):
+                self.refresh_tables()
+                self.edit_group(Group(name, title))
+
+        self.app.push_screen(NewGroupDialog(), named)
+
+    def action_remove_group(self) -> None:
+        group = self._selected_group()
+        if group is None:
+            return
+        if group.built_in:
+            self.notify(f"{group.title} is built in; when no provider is in it, Tab skips it.")
+            return
+
+        def remove() -> None:
+            if self.cue.update_config(remove_group(group.name)):
+                self.notify(f"Removed the {group.title} group.")
+                self.refresh_tables()
+
+        self._confirm(f"Remove the {group.title} group?", "Its providers stay; they just leave this group.",
+                      "Remove", remove)
 
     # -- players --------------------------------------------------------------------
 

@@ -1,3 +1,36 @@
+# Cue 0.3.0: search groups — 2026-11-07
+
+- **Search by group instead of by provider.** Movies, Shows and Anime are built in,
+  plus All; `Tab` switches groups and the status bar names the current one and its
+  providers. A search asks every provider in the group at once. Results appear as
+  each one answers, ranked against the query and tagged with their provider; a
+  provider that fails is listed without hiding the others' results.
+- **Groups come from providers.** Each provider names its groups (`groups`, and the
+  config's `[providers.<name>] groups = [...]` overrides it), so one provider can be in
+  several. Jellyfin and Local are in Shows and Anime; the HiAnime plugin is in Anime;
+  HydraHD is in Movies and Shows.
+- **Movies vs Shows.** A provider that returns both (`mixed_media = True`, like
+  HydraHD) shows only its movies under Movies and only its series under Shows.
+- **Groups tab** in the Plugins menu: each group with its providers; tick which
+  providers are in a group, rename it, start searches in it (`d`), and make (`n`) or
+  remove (`x`) your own. `[groups.<name>]` holds a group's title and optional media;
+  `default_group` says where searches start.
+- `cue -g <group>` starts in a group; `cue -p <provider>` now searches just that
+  provider. An older config's `default_provider` starts in that provider's first group.
+- cue-plugins: `anime` and `hydra` 1.1.0 declare their groups.
+
+Validation: **313 Cue tests and 317 cue-plugins tests passed**. New tests cover:
+- group membership from classes and the config, including several groups and All
+- movie/series splitting for mixed providers
+- custom groups, their titles and media
+- config checks and edits; removing a group takes it out of every provider
+- a merged search across four providers, one of which fails, with filtering and
+  opening a result from the right provider
+- starting groups, `-g` and `-p`
+- the Groups tab: membership, new and removed groups, the starting group
+
+The Groups tab and its dialog were checked in rendered screenshots.
+
 # Cue 0.2.0: plugins, players and self-install — 2026-11-07
 
 - **Plugins.** A plugin is a folder of Python code (`plugin.toml` + `__init__.py`)

@@ -10,6 +10,8 @@ Licensed under the GPL-3.0.
 - **One full-screen TUI**: search → pick → play → next episode without leaving the app.
 - **Source-agnostic**: media comes from providers. Jellyfin and local folders are built
   in; HiAnime, HydraHD and others are plugins you install from Cue's Plugins menu.
+- **Searches by group**: Movies, Shows, Anime or your own groups. A search asks every
+  provider in the group at once, and one provider can be in several groups.
 - **Skips anime openings and endings automatically** using the AniSkip community database.
 - **Resumes anywhere**: watch history and playback positions are saved locally.
 - **Subtitles** from the streaming server, with optional OpenSubtitles fallback.
@@ -61,9 +63,9 @@ and PyInstaller) with Cue installed in editable mode. After pulling changes to
 `environment.yml`, run `conda env update -f environment.yml --prune`. Plain
 `pip install -e ".[dev]"` in any Python 3.11+ environment works too.
 
-Then run `cue` (or `python -m cue`). `cue frieren` searches straight away; `cue -p local`
-starts on a given provider. pip already put `cue` on PATH, so `cue install` is only
-for `cue.exe`.
+Then run `cue` (or `python -m cue`). `cue frieren` searches straight away; `cue -g movies`
+starts in a group, and `cue -p local` searches just one provider. pip already put `cue`
+on PATH, so `cue install` is only for `cue.exe`.
 
 The project folder includes a ready-to-run HiAnime/HydraHD/VLC configuration,
 [config-vlc.toml](config-vlc.toml). HiAnime and HydraHD are plugins, so install them
@@ -83,7 +85,8 @@ cue plugin install hydra --yes
 python -m cue --config config-vlc.toml
 ```
 
-It starts on HiAnime; press `Tab` to switch to HydraHD, or start there with `-p hydra`.
+It starts in the Anime group (HiAnime); `Tab` moves on to All, Movies and Shows (HydraHD).
+`-g movies` starts in Movies.
 The exe accepts it too: `cue.exe --config <path to>\config-vlc.toml`.
 
 ## Setup
@@ -94,7 +97,7 @@ provider is the Plugins menu: on the Home screen press `Esc`, then `p` (see
 for you and keeps your comments. Or fill in at least one provider by hand:
 
 ```toml
-default_provider = "local"
+default_group = "shows"   # where searches start: movies, shows, anime, all, or your own
 auto_skip = true
 auto_next = true
 quality = "best"          # "best", "worst" or a resolution such as "720"
@@ -147,8 +150,8 @@ To keep the optional mpv backend, install [mpv](https://mpv.io/installation/) an
 | `b` (episodes) | Switch HiAnime SUB/DUB; also available in the visible selector |
 | `d` | Download episode(s) |
 | `t` | Cast the episodes (or the typed range) to a TV; while playing, move playback to the TV. See [Casting to a TV](#casting-to-a-tv) |
-| `Tab` | Switch provider |
-| `p` (Home) | Plugins, providers and players menu (also in the command palette, `Ctrl+P`) |
+| `Tab` | Switch search group (Movies, Shows, Anime, ...) |
+| `p` (Home) | Plugins, providers, groups and players menu (also in the command palette, `Ctrl+P`) |
 | `Esc` | Leave a text box |
 | `q` | Back / quit |
 
@@ -156,14 +159,52 @@ To keep the optional mpv backend, install [mpv](https://mpv.io/installation/) an
 latest), and several joined with commas (`1-3,7`). Type one in the Episodes screen's
 range box and press Enter to play the batch, or `Esc` then `d` to download it.
 
+## Search groups
+
+You search a group, not a single provider. The status bar shows which one, and `Tab`
+switches between them:
+
+| Group | Has by default | Notes |
+|---|---|---|
+| Movies | HydraHD | Providers that list both movies and series show only their movies here. |
+| Shows | HydraHD, Jellyfin, Local | ...and only their series here. |
+| Anime | HiAnime, Jellyfin, Local | |
+| All | every provider that's ready | Shown when it adds something. |
+
+A search asks every provider in the group at once. Results arrive as each one answers,
+ranked against what you typed, each tagged with its provider (`[hydra]`). A provider
+that fails is listed under the results, and the others still show. A group with no
+ready provider is skipped by `Tab`.
+
+Each provider says which groups it belongs to, and one provider can be in several.
+Change that, or make your own groups, in the Plugins menu's **Groups** tab, or in the
+config:
+
+```toml
+default_group = "kids"
+
+[providers.local]
+path = "D:/Media"
+groups = ["shows", "kids"]     # replaces the provider's own choice
+
+[groups.kids]
+title = "Kids"
+media = "series"               # optional: "movie" or "series", as for Movies and Shows
+```
+
+`cue -g anime` starts in a group; `cue -p hydra` searches just one provider.
+`default_provider` in an older config still works: Cue starts in that provider's first
+group.
+
 ## Plugins, providers and players
 
-On the Home screen press `Esc`, then `p`. The menu has three tabs; `←` and `→` switch
+On the Home screen press `Esc`, then `p`. The menu has four tabs; `←` and `→` switch
 between them.
 
 | Tab | What it shows | Keys |
 |---|---|---|
-| **Providers** | Every provider Cue knows: built in, from a plugin, or named in your config but not installed. Status says ready, off, or what setup is missing. | `Enter` settings form · `Space` on/off · `d` default for searches |
+| **Providers** | Every provider Cue knows: built in, from a plugin, or named in your config but not installed, with its groups. Status says ready, off, or what setup is missing. | `Enter` settings form · `Space` on/off |
+| **Groups** | Every group and its providers, including empty ones. | `Enter` choose its providers (and rename it) · `d` start searches here · `n` new group · `x` remove one of your own |
 | **Players** | VLC, mpv and players from plugins, and whether each program was found on this PC. | `Enter` where the program is · `d` play with this player |
 | **Plugins** | Installed plugins, then the catalog's plugins you don't have yet. | `Enter` install or update · `Space` on/off · `a` add from a file or link · `x` remove · `r` refresh the catalog |
 
@@ -225,7 +266,7 @@ name, kept in the [cue-plugins](https://github.com/CarsonKopec/cue-plugins) repo
 
 Install the `anime` plugin (Plugins menu → Plugins tab, or `cue plugin install anime`).
 That adds an empty `[providers.anime]` table, which uses these defaults; change them
-in the Providers tab or in the config, then run `cue -p anime`:
+in the Providers tab or in the config. HiAnime is in the Anime group (`cue -g anime`):
 
 ```toml
 [providers.anime]
@@ -234,7 +275,7 @@ language = "sub"          # initial choice: "sub" (default) or "dub"
 timeout = 20
 ```
 
-Set the top-level `default_provider = "anime"` if desired. Existing `search_api`,
+Set the top-level `default_group = "anime"` if desired. Existing `search_api`,
 `episodes_api`, `servers_api`, `agent`, and catalog `headers` options remain
 available. Catalog credentials are not forwarded to external player servers.
 
@@ -268,8 +309,8 @@ another server; Cue does not automatically switch servers after playback has sta
 
 ### HydraHD setup
 
-Install the `hydra` plugin, the same way. Its table's defaults are these; then run
-`cue -p hydra`:
+Install the `hydra` plugin, the same way. HydraHD is in the Movies and Shows groups:
+its movies appear under Movies and its series under Shows. Its table's defaults are:
 
 ```toml
 [providers.hydra]
@@ -363,6 +404,8 @@ from cue.providers.base import Episode, Setting, Show, Stream
 class MyProvider:
     name = "mine"
     title = "My Source"
+    groups = ("movies", "shows")  # the search groups it's in, unless the config says otherwise
+    mixed_media = True            # search returns both; Show.media_type tells them apart
     settings = (                  # the form in the Providers tab
         Setting("url", "Server address", required=True, help="Such as http://nas:8096"),
         Setting("token", "Token", "secret"),

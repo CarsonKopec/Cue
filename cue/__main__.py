@@ -34,7 +34,8 @@ def main(argv: list[str] | None = None) -> int:
                "To search for one of these words, put -- first: cue -- install",
     )
     parser.add_argument("query", nargs="*", help="search for a show right away")
-    parser.add_argument("-p", "--provider", help="provider to start with (default: from the config)")
+    parser.add_argument("-g", "--group", help="search group to start in, such as movies, shows or anime")
+    parser.add_argument("-p", "--provider", help="search only this provider")
     parser.add_argument("--config", type=Path, help=f"config file (default: {config_path()})")
     parser.add_argument("--smoke-test", action="store_true", help="start headless, show the home screen, exit")
     parser.add_argument("--version", action="version", version=f"cue {__version__}")
@@ -54,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from cue.app import CueApp
 
-    app = CueApp(config, initial_query=" ".join(args.query) or None, provider=args.provider)
+    app = CueApp(config, initial_query=" ".join(args.query) or None, provider=args.provider,
+                 group=args.group.lower() if args.group else None)
     if args.smoke_test:
         return _smoke_test(app)
     app.run()
