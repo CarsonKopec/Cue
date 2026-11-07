@@ -27,7 +27,9 @@ Cue uses VLC by default and detects its standard Windows installation under
 `C:\Program Files\VideoLAN\VLC` (or `Program Files (x86)`). A custom installation
 can be selected with the `CUE_VLC` environment variable pointing to `vlc.exe`.
 
-**Release zip:** unzip `cue-<version>-win64.zip` and run `cue.exe`. The first time,
+**Release zip:** download `cue-<version>-win64.zip` (or just `cue.exe`) from the
+[latest release](https://github.com/CarsonKopec/Cue/releases/latest), unzip it and run
+`cue.exe`. `SHA256SUMS.txt` in the release lists their checksums. The first time,
 it asks whether to install itself:
 
 ```
@@ -665,6 +667,29 @@ on a clean machine to check a build.
 
 The release script runs that smoke test too, with a throwaway Cue folder, so a build
 that can't start fails.
+
+### Releasing
+
+The [Release workflow](.github/workflows/release.yml) builds `cue.exe` on GitHub's
+Windows runners and publishes it, only when you start it:
+
+1. Raise `__version__` in [cue/__init__.py](cue/__init__.py) and add its entry at the
+   top of [CHANGELOG.md](CHANGELOG.md). That entry becomes the release notes.
+2. Push to master, then start the workflow: Actions → Release → Run workflow, or
+
+   ```bash
+   gh workflow run release.yml
+   ```
+
+It runs the tests, builds with `build/release.py` (smoke test included), tags the commit
+`v<version>` and attaches `cue.exe`, `cue-<version>-win64.zip` and `SHA256SUMS.txt`. A
+version that's already released is refused. The workflow has options for a draft
+(publish it yourself after checking), a pre-release, and a dry run that only tests and
+builds and keeps the files as a downloadable workflow artifact:
+
+```bash
+gh workflow run release.yml -f dry_run=true
+```
 
 Plugins are built and published separately, from the
 [cue-plugins](https://github.com/CarsonKopec/cue-plugins) repository: each push to its
