@@ -50,8 +50,17 @@ Settings → Apps. No administrator rights are needed. Open a new terminal and t
 the question; delete `%APPDATA%\cue\install-declined` to bring it back. To install
 without the question, run `cue.exe install` from the unzipped folder.
 
-`cue uninstall` (or Uninstall in Settings → Apps) removes the program and its PATH
-entry. Your settings, history and plugins in `%APPDATA%\cue` are kept. Cue also runs
+Cue then offers to download **FFmpeg**, which it uses to play streams in players that
+can't on their own, such as Windows' Media Player. It's
+[gyan.dev](https://www.gyan.dev/ffmpeg/builds/)'s essentials build: about 115 MB to
+download and 105 MB once installed. The download is checked against the SHA-256
+gyan.dev publishes, and only `ffmpeg.exe` is kept, next to `cue.exe`. Cue doesn't ask
+when it already finds FFmpeg (on PATH, for example).
+`cue install --ffmpeg` downloads it without asking, even when another copy is on PATH,
+and `--no-ffmpeg` skips it.
+
+`cue uninstall` (or Uninstall in Settings → Apps) removes the program, the FFmpeg it
+downloaded, and its PATH entry. Your settings, history and plugins in `%APPDATA%\cue` are kept. Cue also runs
 fine without installing, straight from the unzipped folder.
 
 VLC is installed separately. A complete portable VLC folder at `cue\vlc\` is also
@@ -455,6 +464,7 @@ all of that, so Cue steps in only where a player needs it:
 The relay listens on `127.0.0.1` only, so nothing outside this PC can reach it. Joining a
 stream and the downloads use [FFmpeg](https://ffmpeg.org/download.html), on `PATH`,
 next to `cue.exe` or set with `CUE_FFMPEG`; yt-dlp downloads too if FFmpeg is missing.
+On Windows, `cue install --ffmpeg` downloads FFmpeg next to Cue.
 Both keep the source's best video and its default audio language.
 
 Downloads for players that only open files are quick and easy on a small disk:

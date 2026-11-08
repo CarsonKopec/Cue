@@ -23,8 +23,9 @@ UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Cue"
 ENVIRONMENT_KEY = "Environment"
 REG_SZ, REG_EXPAND_SZ, REG_DWORD = 1, 2, 4  # winreg's value types, without importing winreg elsewhere
 EXE = "cue.exe"
-# Files a release zip may carry next to cue.exe, which Cue looks for beside itself.
-COMPANIONS = ("mpv", "mpv.exe", "vlc", "yt-dlp.exe", "README.md", "LICENSE")
+# Files a release zip may carry next to cue.exe, which Cue looks for beside itself. ffmpeg.exe
+# may also come from `cue install` downloading it; uninstalling removes it with the rest.
+COMPANIONS = ("mpv", "mpv.exe", "vlc", "yt-dlp.exe", "ffmpeg.exe", "README.md", "LICENSE")
 
 
 class InstallError(Exception):
@@ -156,7 +157,7 @@ def _replace(source: Path, target: Path) -> None:
 
 
 def _clear_leftovers(folder: Path) -> None:
-    for leftover in folder.glob("cue.old-*.exe"):
+    for leftover in [*folder.glob("cue.old-*.exe"), *folder.glob("ffmpeg.old-*.exe")]:
         try:
             leftover.unlink()
         except OSError:

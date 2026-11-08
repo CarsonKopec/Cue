@@ -27,7 +27,11 @@ def _parser() -> argparse.ArgumentParser:
     common.add_argument("--config", type=Path, help=f"config file (default: {config_path()})")
     parser = argparse.ArgumentParser(prog="cue")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("install", parents=[common], help="install cue.exe for this user and add it to PATH")
+    setup = commands.add_parser("install", parents=[common], help="install cue.exe for this user and add it to PATH")
+    ffmpeg = setup.add_mutually_exclusive_group()
+    ffmpeg.add_argument("--ffmpeg", dest="ffmpeg", action="store_true", default=None,
+                        help="also download FFmpeg (gyan.dev) next to it, without asking")
+    ffmpeg.add_argument("--no-ffmpeg", dest="ffmpeg", action="store_false", help="don't download FFmpeg")
     remove = commands.add_parser("uninstall", parents=[common], help="remove the installed cue.exe and its PATH entry")
     remove.add_argument("-y", "--yes", action="store_true", help="don't ask first")
     refresh = commands.add_parser("update", parents=[common], help="update Cue and its plugins now")
@@ -85,7 +89,50 @@ def _install(args: argparse.Namespace) -> int:
     else:
         print("It was already on your PATH.")
     print("It's listed in Settings → Apps; `cue uninstall` removes it.")
+    offer_ffmpeg(target.parent, choice=args.ffmpeg)
     return 0
+
+
+def offer_ffmpeg(folder: Path, *, choice: bool | None = None, ask: Callable[[str], str] | None = None) -> None:
+    """Download FFmpeg next to the installed Cue, unless one is already there.
+
+    ``choice`` None asks first, and only when Cue can't find FFmpeg anywhere (on PATH, say);
+    True (``--ffmpeg``) downloads without asking; False (``--no-ffmpeg``) never does.
+    """
+    from cue.ffmpeg_setup import DOWNLOAD_MB, FFMPEG, INSTALLED_MB, FFmpegError, download_ffmpeg
+    from cue.player.locate import find_ffmpeg
+
+    if choice is False or (folder / FFMPEG).is_file() or (choice is None and find_ffmpeg() is not None):
+        return
+    if choice is None:
+        if ask is None and not sys.stdin.isatty():
+            print("FFmpeg wasn't found; `cue install --ffmpeg` downloads it.")
+            return
+        question = (
+            "Cue uses FFmpeg to play streams in players that can't on their own, such as Windows' Media Player. "
+            f"Download it from gyan.dev ({DOWNLOAD_MB} MB, {INSTALLED_MB} MB once installed)? [Y/n] "
+        )
+        try:
+            answer = (ask or input)(question).strip().lower()
+        except EOFError:
+            return
+        if answer not in ("", "y", "yes"):
+            print("Skipped. `cue install --ffmpeg` downloads it later.")
+            return
+    shown = [-1]
+
+    def progress(done: int, total: int) -> None:
+        step = done * 20 // total if total else -1  # every 5%
+        if step != shown[0]:
+            shown[0] = step
+            print(f"\rDownloading FFmpeg... {step * 5}%" if total else "\rDownloading FFmpeg...", end="", flush=True)
+
+    try:
+        path = download_ffmpeg(folder, progress=progress)
+    except FFmpegError as exc:
+        print(f"\nCouldn't get FFmpeg: {exc}. `cue install --ffmpeg` tries again.")
+        return
+    print(f"\rFFmpeg is ready: {path}          ")
 
 
 def _uninstall(args: argparse.Namespace) -> int:
@@ -134,6 +181,7 @@ def offer_install(ask: Callable[[str], str] | None = None) -> None:
             print(f"Couldn't install: {exc}")
             return
         print(f"Installed to {target.parent}." + (" Open a new terminal to use `cue`." if path_changed else ""))
+        offer_ffmpeg(target.parent, ask=ask)
 
 
 # -- update ------------------------------------------------------------------------------

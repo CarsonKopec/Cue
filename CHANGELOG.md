@@ -1,3 +1,32 @@
+# Unreleased: FFmpeg with cue install
+
+- **`cue install` gets FFmpeg too**, which Cue needs to play streams in players that
+  can't on their own (Windows' Media Player through the Default app).
+  - When Cue can't find FFmpeg, installing (with `cue install` or the first-run
+    question) offers to download it.
+  - The download is gyan.dev's essentials build, the smallest Windows FFmpeg:
+    115 MB to download, 105 MB installed.
+  - It comes over https only and is checked against the SHA-256 gyan.dev publishes.
+  - Only `ffmpeg.exe` is kept, next to `cue.exe`; the archive, ffprobe and ffplay are
+    deleted.
+  - `cue install --ffmpeg` downloads it without asking (even with FFmpeg on PATH);
+    `--no-ffmpeg` skips it.
+  - `cue uninstall` removes it with Cue.
+- When FFmpeg is missing, the message for players that only open files now says
+  `cue install --ffmpeg` gets it.
+
+Validation:
+- 8 new tests, against a stand-in for gyan.dev:
+  - only `ffmpeg.exe` is kept, and it replaces an earlier copy
+  - nothing is installed when the checksum doesn't match, is missing, a redirect
+    leaves https, the program isn't one, or the archive has no `bin/ffmpeg.exe`
+  - the question is asked only when FFmpeg is missing
+  - `--ffmpeg` and `--no-ffmpeg`, and with no terminal to ask in
+- Live: Cue read the real gyan.dev archive's file list and checksum, and `ffmpeg.exe`
+  is at `bin/` as expected.
+- Not verified: a full live download. Running a downloaded program was blocked in the
+  test environment.
+
 # Cue 0.4.0: AirPlay, Chromecast, any player, automatic updates, Linux and macOS — 2026-11-08
 
 ## AirPlay, Chromecast, and Cue on Linux and macOS

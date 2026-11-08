@@ -247,7 +247,7 @@ class LocalRelay:
             if find_ytdlp() is None:
                 raise PlayerError(
                     "To play streams in a player that only opens files, Cue needs FFmpeg (ffmpeg.org) or "
-                    "yt-dlp on PATH or next to cue.exe."
+                    "yt-dlp on PATH or next to cue.exe. `cue install --ffmpeg` downloads FFmpeg for you."
                 )
             saved = self._save_with_ytdlp(stream, folder, safe_filename(name), progress)
         tidy(folder, storage, spare={saved})
