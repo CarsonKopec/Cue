@@ -125,9 +125,8 @@ Validation:
   line; FFmpeg joins and saves a generated HLS stream when it's installed.
 - Live: through the relay, a real HydraHD episode played as 1080p video with its default
   English audio, and as a continuous stream.
-- Not verified: the downloaded file opening in Windows' Media Player. It never
-  started from the test environment, even through Explorer, so try it in your own
-  terminal.
+- Live: Windows' Media Player opened and played a downloaded episode through the
+  default-app player (tested by hand).
 
 # Cue 0.3.2: a logo — 2026-11-07
 
