@@ -1,4 +1,6 @@
-# Unreleased: AirPlay, Chromecast, and Cue on Linux and macOS
+# Cue 0.4.0: AirPlay, Chromecast, any player, automatic updates, Linux and macOS — 2026-11-08
+
+## AirPlay, Chromecast, and Cue on Linux and macOS
 
 - **Cast to AirPlay and Chromecast TVs.** Pressing `t` now lists VLC (the Xbox's
   Network tab, as before) and the AirPlay and Chromecast TVs Cue finds on the network.
@@ -44,7 +46,7 @@ Live, Cue found a Samsung TV's AirPlay on this network. **Not verified**: pairin
 and playing on a real AirPlay TV (the TV was off when tested), and any real Chromecast
 (none on this network).
 
-# Unreleased: automatic updates
+## Automatic updates
 
 - **cue.exe updates itself.** Once a day at startup it asks GitHub for Cue's latest
   release, in the background so startup never waits, and stays quiet if offline. A
@@ -74,7 +76,7 @@ Validation: **325 Cue tests passed** (11 new), covering:
 Before the update code was written, a running copy of `cue.exe` on this PC was renamed
 and a new one put in its place, which is the swap the update relies on.
 
-# Unreleased: any player can play streams
+## Any player can play streams
 
 - **Another program**: a built-in player that runs any video player (MPC-HC,
   PotPlayer, KMPlayer, …) with arguments you set; `{url}`, `{title}`, `{start}` and
