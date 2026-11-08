@@ -438,6 +438,26 @@ def test_cli_installs_lists_disables_and_removes(tmp_path: Path, cue_home: Path,
         providers.unregister(f"plugin:{name}")
 
 
+def test_cli_names_subtitle_sources(tmp_path: Path, cue_home: Path, name: str,
+                                    capsys: pytest.CaptureFixture[str]) -> None:
+    from cue.subtitles.registry import unregister_subtitles
+
+    folder = write_plugin(tmp_path / "src", name, extra=f'subtitles = ["{name}-subs"]\n', body=(
+        PROVIDER.format(provider=f"{name}-p")
+        + "from cue.subtitles.registry import SubtitleBackend, register_subtitles\n"
+        + f"register_subtitles(SubtitleBackend('{name}-subs', 'Subs', lambda options, http, folder: None))\n"
+    ))
+    try:
+        assert run(["plugin", "install", str(folder), "--yes"]) == 0
+        assert f"(adds {name}-p, {name}-subs (subtitles))" in capsys.readouterr().out
+        assert run(["plugin", "list"]) == 0
+        assert f"{name}-p, {name}-subs (subtitles)" in capsys.readouterr().out
+    finally:
+        PluginManager(cue_home / "plugins").load_enabled()
+        providers.unregister(f"plugin:{name}")
+        unregister_subtitles(f"plugin:{name}")
+
+
 def test_cli_installs_and_updates_from_a_local_catalog(tmp_path: Path, cue_home: Path, name: str,
                                                       monkeypatch: pytest.MonkeyPatch,
                                                       capsys: pytest.CaptureFixture[str]) -> None:

@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import httpx
@@ -267,8 +267,9 @@ def _list(manager: PluginManager) -> int:
         print(f"No plugins installed in {manager.root}. `cue plugin catalog` lists some.")
     for plugin in plugins:
         state = f"error: {plugin.error}" if plugin.error else "on" if plugin.enabled else "off"
-        adds = ", ".join([*plugin.manifest.providers, *plugin.manifest.players])
-        print(f"{plugin.name:<16} {plugin.manifest.version:<9} {state:<5} {adds}")
+        manifest = plugin.manifest
+        print(f"{plugin.name:<16} {manifest.version:<9} {state:<5} "
+              f"{_adds(manifest.providers, manifest.players, manifest.subtitles)}")
     return 0
 
 
@@ -325,6 +326,11 @@ async def _install_plugins(args: argparse.Namespace, config: Config, manager: Pl
                 print(f"Installed {plugin.manifest.title} {plugin.manifest.version}, but it didn't load: {plugin.error}")
                 failed = True
             else:
-                adds = ", ".join([*plugin.providers, *plugin.players]) or "nothing yet"
+                adds = _adds(plugin.providers, plugin.players, plugin.subtitles) or "nothing yet"
                 print(f"Installed {plugin.manifest.title} {plugin.manifest.version} (adds {adds}).")
     return 1 if failed else 0
+
+
+def _adds(providers: Sequence[str], players: Sequence[str], subtitles: Sequence[str]) -> str:
+    """What a plugin adds, in one line: its providers, then its players and subtitle sources."""
+    return ", ".join([*providers, *players, *(f"{name} (subtitles)" for name in subtitles)])
