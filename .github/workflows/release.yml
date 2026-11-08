@@ -1,5 +1,5 @@
-# Builds cue.exe on Windows and publishes it as a GitHub release, when started by hand:
-# Actions -> Release -> Run workflow, or `gh workflow run release.yml`.
+# Builds Cue on Windows, Linux and macOS and publishes them together as a GitHub release,
+# when started by hand: Actions -> Release -> Run workflow, or `gh workflow run release.yml`.
 # The tag is v<version> from cue/__init__.py; raise that version before each release.
 name: Release
 
@@ -15,7 +15,7 @@ on:
         type: boolean
         default: false
       dry_run:
-        description: "Only test and build: keep cue.exe as a workflow artifact, make no release"
+        description: "Only test and build: keep the files as a workflow artifact, make no release"
         type: boolean
         default: false
 
@@ -27,19 +27,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - name: Read the version
         id: version
@@ -59,21 +57,29 @@ jobs:
             exit 1
           fi
 
-      - name: Install
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gather every platform's files
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cue-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and release notes
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Test
-        run: python -m pytest -q
-
-      - name: Build cue.exe and the zip
-        # Also runs `cue.exe --version` and `--smoke-test`, so a build that can't start fails here.
-        run: python build/release.py
-
-      - name: Release notes from CHANGELOG.md
-        run: |
-          python - "${{ steps.version.outputs.version }}" <<'EOF'
+          python3 - "$VERSION" <<'EOF'
           import pathlib, re, sys
           version = sys.argv[1]
           text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
@@ -83,29 +89,28 @@ jobs:
               print(f"::warning::CHANGELOG.md's newest entry ({heading.strip()!r}) doesn't mention {version}")
           pathlib.Path("notes.md").write_text((body.strip() or "See CHANGELOG.md.") + "\n", encoding="utf-8")
           EOF
-          cd dist && sha256sum cue.exe "cue-${{ steps.version.outputs.version }}-win64.zip" > SHA256SUMS.txt
+          cd dist
+          chmod +x cue-linux-* cue-macos-*
+          sha256sum -- * > SHA256SUMS.txt
+          ls -l
           cat SHA256SUMS.txt
 
-      - name: Keep the build (dry run)
+      - name: Keep the files (dry run)
         if: ${{ inputs.dry_run }}
         uses: actions/upload-artifact@v4
         with:
-          name: cue-${{ steps.version.outputs.version }}
+          name: cue-${{ env.VERSION }}-release
           path: |
-            dist/cue.exe
-            dist/cue-${{ steps.version.outputs.version }}-win64.zip
-            dist/SHA256SUMS.txt
+            dist/*
             notes.md
 
       - name: Publish the release
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-          TAG: ${{ steps.version.outputs.tag }}
         run: |
           flags=()
           if [ "${{ inputs.draft }}" = "true" ]; then flags+=(--draft); fi
           if [ "${{ inputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
-          gh release create "$TAG" dist/cue.exe "dist/cue-$VERSION-win64.zip" dist/SHA256SUMS.txt \
-            --target "${{ github.sha }}" --title "Cue $VERSION" --notes-file notes.md "${flags[@]}"
+          gh release create "$TAG" dist/* --target "${{ github.sha }}" --title "Cue $VERSION" \
+            --notes-file notes.md "${flags[@]}"

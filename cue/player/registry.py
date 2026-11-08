@@ -44,6 +44,10 @@ class PlayerBackend:
     platforms: tuple[str, ...] = ()  # sys.platform values it runs on; empty means all
     settings: tuple[Setting, ...] = ()  # besides "path"
     has_program: bool = True  # False for players with no program to point at, such as the system's default app
+    # What it can open, so Cue knows when to step in (see cue.player.relay):
+    headers: frozenset[str] | None = None  # lower-case HTTP headers it can send; None: it checks itself
+    hls: bool = True  # plays HLS (.m3u8) links; otherwise Cue hands it one continuous stream
+    links: bool = True  # opens web links at all; otherwise Cue downloads the episode first
 
     @property
     def supported(self) -> bool:
@@ -104,10 +108,34 @@ def _mpv(program: str, options: Mapping[str, Any]) -> Player:
 register_player(PlayerBackend(
     "vlc", "VLC", lambda options: find_vlc(), _vlc,
     missing="Install VLC from videolan.org, put vlc.exe next to cue.exe, or set its path here.",
-    description="Full control: resume, auto-skip, subtitles. Sends only Referer and User-Agent headers.",
+    description="Full control: resume, auto-skip, subtitles. Sources that need other headers, such as "
+                "Jellyfin's login, play through Cue's local relay.",
+    headers=frozenset({"referer", "user-agent"}),
 ))
 register_player(PlayerBackend(
     "mpv", "mpv", lambda options: find_mpv(), _mpv,
     missing="Put mpv.exe next to cue.exe, add it to PATH, or set its path here.",
     description="Full control, and any HTTP header a source needs (Jellyfin's login, for one).",
+))
+
+
+def _other(program: str, options: Mapping[str, Any]) -> Player:
+    from cue.player.command import CommandPlayer
+
+    return CommandPlayer(program, options)
+
+
+register_player(PlayerBackend(
+    "other", "Another program", lambda options: None, _other,
+    missing="Set the player's program in the Players tab (Enter).",
+    description="Any video player: Cue runs it with a link it can open, without the headers a source needs. "
+                "Cue can't skip intros or save your place in it.",
+    controls=False,
+    settings=(
+        Setting("arguments", "Arguments", default='"{url}"',
+                help="{url} is the link; {title}, {start} (seconds) and {start_ms} are also filled in."),
+        Setting("hls", "It plays HLS (.m3u8) links", "bool", True,
+                help="Off: Cue sends one continuous stream instead (needs FFmpeg for most sources)."),
+    ),
+    headers=frozenset(),
 ))

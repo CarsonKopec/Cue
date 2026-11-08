@@ -484,7 +484,8 @@ async def test_missing_adapter_turns_casting_off(monkeypatch, store, tmp_path):
         assert any("adapter is named 'Wi-Fi'" in str(n.message) for n in app._notifications)
 
 
-async def test_t_casts_the_episodes(media_dir: Path, store, tmp_path: Path):
+async def test_t_casts_the_episodes(media_dir: Path, store, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("cue.app.devices.supported", lambda: [])  # no AirPlay or Chromecast: straight to VLC
     offline = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404)))
     app = CueApp(Config(providers={"local": {"path": str(media_dir)}}), store=store, http=offline,
                  dropin_dir=tmp_path / "no-plugins")
@@ -535,7 +536,8 @@ class WatchingSession:
         pass
 
 
-async def test_send_to_tv_moves_playback_from_the_pc(store, tmp_path: Path):
+async def test_send_to_tv_moves_playback_from_the_pc(store, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("cue.app.devices.supported", lambda: [])
     app = CueApp(Config(), store=store, dropin_dir=tmp_path / "no-plugins",
                  http=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404))))
     published = []
@@ -559,3 +561,163 @@ async def test_send_to_tv_moves_playback_from_the_pc(store, tmp_path: Path):
     # The current and later episodes, with the session's own SUB/DUB binding.
     assert (provider_name, provider, show) == ("local", session.provider, session.show)
     assert [episode.number for episode in queue] == [2, 3]
+
+
+# -- AirPlay and Chromecast ---------------------------------------------------------------
+
+
+async def test_tvs_told_what_to_play_get_resolved_media(cast):
+    generation, first = cast.server.publish_queue(
+        "fake", FakeProvider({1: [source_stream()], 2: ProviderError("Server is down")}), SHOW, EPISODES)
+    assert (generation, first) == (1, 0) and cast.server.queue_length(generation) == 2
+    media = await cast.server.media(generation, 0)
+    assert media.url == f"{cast.server.base_url}/play/1/0" and media.content_type == PLAYLIST_TYPE
+    assert media.title.startswith("Show") and media.start == 0.0
+    with pytest.raises(ProviderError, match="Server is down"):
+        await cast.server.media(generation, 1)
+    with pytest.raises(ProviderError, match="replaced"):
+        await cast.server.media(99, 0)
+
+    # Played to the end (the TV asked for the last pieces): the next one may start.
+    assert not cast.server.finished(generation, 0)
+    master = await cast.tv.get("/play/1/0")
+    media_playlist = await cast.tv.get(master.text.splitlines()[-1])
+    segments = [line for line in media_playlist.text.splitlines() if line.startswith("http")]
+    await cast.tv.get(segments[-1])
+    await eventually(lambda: cast.server.finished(generation, 0))
+
+
+async def test_chromecast_may_read_media_but_not_the_server_pages(cast):
+    cast.server.publish("fake", FakeProvider({1: [source_stream()]}), SHOW, EPISODES[:1])
+    master = await cast.tv.get("/play/1/0")
+    assert master.headers["access-control-allow-origin"] == "*"
+    piece = master.text.splitlines()[-1]
+    preflight = await cast.tv.request("OPTIONS", piece, headers={"Access-Control-Request-Headers": "range"})
+    assert preflight.status_code == 204 and preflight.headers["access-control-allow-headers"] == "range"
+    assert "GET" in preflight.headers["access-control-allow-methods"]
+    index = await cast.tv.get("/")
+    assert "access-control-allow-origin" not in index.headers
+
+
+def test_airplay_speakers_are_left_out() -> None:
+    from cue.cast.devices import _plays_video
+
+    assert _plays_video({"features": "0x5A7FFFF7,0x1E"})  # an Apple TV
+    assert not _plays_video({"features": "0x4A7FCA00,0xBC354BD0"})  # a HomePod
+    assert _plays_video({}) and _plays_video({"features": "nonsense"})  # unknown: offer it
+
+
+async def test_discovery_keeps_what_answered(monkeypatch) -> None:
+    from cue.cast import devices
+
+    monkeypatch.setattr(devices, "supported", lambda: [devices.AIRPLAY, devices.CHROMECAST])
+
+    async def airplay(credentials, timeout):
+        return [devices.Device(devices.AIRPLAY, "Living room", "a", "10.0.0.2")]
+
+    async def chromecast(timeout):
+        raise OSError("no multicast here")
+
+    monkeypatch.setattr(devices, "_airplay_devices", airplay)
+    monkeypatch.setattr(devices, "_chromecast_devices", chromecast)
+    assert [d.name for d in await devices.discover(Path("unused.json"), 0.1)] == ["Living room"]
+
+
+async def test_chromecast_playback_ends_when_its_video_does() -> None:
+    import threading
+
+    from cue.cast import devices
+
+    class Controller:
+        def __init__(self):
+            self.listeners = []
+
+        def register_status_listener(self, listener):
+            self.listeners.append(listener)
+
+        def play_media(self, url, content_type, **options):
+            self.loaded = (url, content_type, options)
+            report = self.listeners[0]
+
+            def statuses():  # what came before is ignored; then this video plays and ends
+                report.new_media_status(SimpleNamespace(content_id="http://old", player_state="IDLE", idle_reason="FINISHED"))
+                report.new_media_status(SimpleNamespace(content_id=url, player_state="BUFFERING", idle_reason=None))
+                report.new_media_status(SimpleNamespace(content_id=url, player_state="PLAYING", idle_reason=None))
+                report.new_media_status(SimpleNamespace(content_id=url, player_state="IDLE", idle_reason=self.reason))
+
+            threading.Thread(target=statuses).start()
+
+    class Cast:
+        def __init__(self):
+            self.media_controller = Controller()
+
+        def register_status_listener(self, listener):
+            pass
+
+        def disconnect(self, timeout):
+            pass
+
+    cast = Cast()
+    receiver = devices._Chromecast(devices.Device(devices.CHROMECAST, "Kitchen", "c", "10.0.0.3"), cast)
+    media = devices.Media("http://pc/play/1/0", "Show · episode 1", PLAYLIST_TYPE, 95.0)
+    cast.media_controller.reason = "FINISHED"
+    await asyncio.wait_for(receiver.play(media), 5)
+    assert cast.media_controller.loaded == ("http://pc/play/1/0", PLAYLIST_TYPE, {
+        "title": "Show · episode 1", "current_time": 95.0, "stream_type": "BUFFERED"})
+    cast.media_controller.reason = "ERROR"
+    with pytest.raises(devices.DeviceError, match="stopped with an error"):
+        await asyncio.wait_for(receiver.play(media), 5)
+    await receiver.close()
+
+
+async def test_casting_to_a_tv_pairs_once_and_moves_on(store, tmp_path: Path, monkeypatch):
+    from cue.cast import devices
+    from cue.screens.cast import CastPicker, PairingDialog
+
+    tv = devices.Device(devices.AIRPLAY, "Living room", "tv-1", "10.0.0.9", "Samsung", needs_pairing=True)
+    monkeypatch.setattr("cue.app.devices.supported", lambda: [devices.AIRPLAY])
+
+    async def discover(credentials, timeout=devices.SCAN_SECONDS):
+        return [tv]
+
+    played, codes, closed = [], [], []
+
+    class Receiver(devices.Receiver):
+        async def play(self, media):
+            played.append(media.url)
+
+        async def close(self):
+            closed.append(True)
+
+    async def connect(device, credentials):
+        assert codes, "paired before connecting"
+        return Receiver()
+
+    async def pair(device, credentials, ask_code):
+        codes.append(await ask_code())
+
+    async def media(generation, index):
+        return devices.Media(f"http://pc/play/{generation}/{index}", f"Episode {index + 1}", PLAYLIST_TYPE)
+
+    monkeypatch.setattr("cue.screens.cast.devices.discover", discover)
+    monkeypatch.setattr("cue.app.devices.connect", connect)
+    monkeypatch.setattr("cue.app.devices.pair", pair)
+    app = CueApp(Config(), store=store, dropin_dir=tmp_path / "no-plugins",
+                 http=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404))))
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.cast_server = SimpleNamespace(
+            name="Cue", base_url="http://pc:8770", stop=lambda: None, publish_queue=lambda *args: (7, 1),
+            queue_length=lambda generation: 3, media=media,
+            finished=lambda generation, index: index == 1,  # episode 2 played to the end, episode 3 was stopped
+        )
+        app.cast("fake", SHOW, [*EPISODES, Episode("s1", 3)], provider=FakeProvider({}))
+        await pilot.pause()
+        assert isinstance(app.screen, CastPicker)
+        await eventually(lambda: "Living room" in str(app.screen.query_one("#targets").get_option_at_index(1).prompt))
+        await pilot.press("down", "enter")
+        await eventually(lambda: isinstance(app.screen, PairingDialog))
+        await pilot.press("1", "2", "3", "4", "enter")
+        await eventually(lambda: bool(closed))
+    assert codes == ["1234"]
+    assert played == ["http://pc/play/7/1", "http://pc/play/7/2"]
+    assert app._last_tv == "tv-1"

@@ -1,4 +1,4 @@
-"""Commands besides the TUI: ``cue install``, ``cue uninstall`` and ``cue plugin …``."""
+"""Commands besides the TUI: ``cue install``, ``cue uninstall``, ``cue update`` and ``cue plugin …``."""
 
 from __future__ import annotations
 
@@ -30,6 +30,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("install", parents=[common], help="install cue.exe for this user and add it to PATH")
     remove = commands.add_parser("uninstall", parents=[common], help="remove the installed cue.exe and its PATH entry")
     remove.add_argument("-y", "--yes", action="store_true", help="don't ask first")
+    refresh = commands.add_parser("update", parents=[common], help="update Cue and its plugins now")
+    refresh.add_argument("--check", action="store_true", help="only say what's available")
 
     plugin = commands.add_parser("plugin", aliases=["plugins"], help="list, install and remove plugins")
     actions = plugin.add_subparsers(dest="action", required=True)
@@ -54,6 +56,8 @@ def run(argv: list[str]) -> int:
             return _install(args)
         if args.command == "uninstall":
             return _uninstall(args)
+        if args.command == "update":
+            return asyncio.run(_update(args))
         return _plugin(args)
     except (ConfigError, InstallError, PluginError, OSError) as exc:
         print(f"cue: {exc}", file=sys.stderr)
@@ -130,6 +134,51 @@ def offer_install(ask: Callable[[str], str] | None = None) -> None:
             print(f"Couldn't install: {exc}")
             return
         print(f"Installed to {target.parent}." + (" Open a new terminal to use `cue`." if path_changed else ""))
+
+
+# -- update ------------------------------------------------------------------------------
+
+
+async def _update(args: argparse.Namespace) -> int:
+    """Update cue.exe and the plugins now (not waiting for the daily check), or with --check just report."""
+    from cue import update
+
+    config = load_config(args.config)
+    manager = PluginManager(plugins_dir(), config.plugins.disabled)
+    manager.clean_up()
+    manager.load_enabled()
+    frozen = is_frozen()
+    async with _client() as http:
+        outcome = await update.run(http, manager, config.plugins.catalog, install=not args.check, app=frozen,
+                                   registry=update.user_registry() if frozen else None)
+    update.mark_checked()  # counts as today's check
+
+    release = outcome.release
+    if not frozen:
+        print(f"This is Cue {__version__} running from Python: update it with git pull, "
+              "or pip install -U for an installed package.")
+    elif outcome.app_error:
+        print(f"Couldn't check for a new Cue: {outcome.app_error}")
+    elif release is not None and outcome.app_installed:
+        print(f"Updated Cue {__version__} to {release.version}. Open cue again to use it.")
+    elif release is not None and release.newer:
+        print(f"Cue {release.version} is available (this is {__version__}). Run cue update to install it.")
+    else:
+        print(f"Cue {__version__} is up to date.")
+
+    if not config.plugins.catalog:
+        print("Plugins: the catalog is turned off ([plugins] catalog is empty).")
+    elif outcome.plugins_installed:
+        print("Updated plugins: " + ", ".join(
+            f"{plugin.manifest.title} {plugin.manifest.version}" for plugin in outcome.plugins_installed))
+    elif outcome.plugins_available:
+        print("Plugin updates available: " + ", ".join(
+            f"{entry.manifest.title} {entry.manifest.version}" for entry in outcome.plugins_available))
+    elif not outcome.plugin_errors:
+        print("Plugins are up to date.")
+    for problem in outcome.plugin_errors:
+        print(f"Plugin update problem: {problem}")
+    return 1 if outcome.app_error or outcome.plugin_errors else 0
 
 
 # -- plugins ------------------------------------------------------------------------------

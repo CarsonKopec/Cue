@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -16,18 +17,22 @@ from textual.screen import Screen
 from cue import __version__
 from cue.cast import CastServer
 from cue.cast.network import AdapterError, adapter_address
-from cue.config import Change, Config, ConfigError, config_path, db_path, edit_config, subs_dir
+from cue.cast import devices
+from cue.config import Change, Config, ConfigError, app_dir, config_path, db_path, edit_config, subs_dir
 from cue.config import dropin_dir as default_dropin_dir
 from cue.config import plugins_dir as default_plugins_dir
 from cue.download import DownloadError, download
 from cue.groups import Group, single
 from cue.groups import build as build_groups
 from cue.player.base import Player
+from cue.player.locate import find_ffmpeg
 from cue.player.registry import players as player_backends
+from cue.player.relay import LocalRelay, Storage, downloads_dir, route_player, tidy
 from cue.player.session import PlaybackSession
 from cue.plugins import CatalogEntry, PluginManager
 from cue.providers import create_providers, provider_options
 from cue.providers.base import Episode, Provider, ProviderError, Show
+from cue.screens.cast import DLNA, CastPicker, PairingDialog
 from cue.screens.episodes import EpisodesScreen
 from cue.screens.home import HomeScreen
 from cue.screens.player import NowPlayingScreen
@@ -101,7 +106,8 @@ class CueApp(App[None]):
     #np-message {
         margin-top: 1;
     }
-    SubtitlePicker, ConfirmDialog, AddPluginDialog, ProviderSettingsDialog, GroupDialog, NewGroupDialog {
+    SubtitlePicker, ConfirmDialog, AddPluginDialog, ProviderSettingsDialog, GroupDialog, NewGroupDialog,
+    CastPicker, PairingDialog {
         align: center middle;
     }
     .dialog {
@@ -226,6 +232,9 @@ class CueApp(App[None]):
         self._sessions: set[PlaybackSession] = set()
         self._audio_modes: dict[str, str] = {}
         self.cast_server: CastServer | None = None
+        self._last_tv = ""  # the AirPlay or Chromecast TV cast to last, offered first next time
+        self._relay: LocalRelay | None = None  # started the first time a player needs it
+        self._relay_lock = threading.Lock()
 
     def _build_groups(self) -> None:
         """Work out the groups from the ready providers, keeping the current one if it still exists."""
@@ -256,10 +265,34 @@ class CueApp(App[None]):
     def on_mount(self) -> None:
         if self.config.cast.enabled:
             self._start_cast()
+        from cue import update
+        from cue.install import is_frozen
+
+        # Only cue.exe checks by itself; a source checkout (and the tests) never goes online for this.
+        if self.config.updates.check and is_frozen() and update.due():
+            self.run_worker(self._auto_update(), group="updates", exit_on_error=False)
+
+    async def _auto_update(self) -> None:
+        """The daily update check: a newer Cue is installed for next time, newer plugins right away."""
+        from cue import update
+
+        update.mark_checked()
+        outcome = await update.run(
+            self.http, self.plugins, self.config.plugins.catalog,
+            install=self.config.updates.install, registry=update.user_registry(),
+        )
+        if outcome.plugins_installed:
+            self.reload_providers()
+        for title, message in outcome.notices():
+            self.notify(message, title=title, timeout=10)
 
     async def on_unmount(self) -> None:
         if self.cast_server is not None:
             self.cast_server.stop()
+        if self._relay is not None:
+            self._relay.stop()
+        with contextlib.suppress(OSError):  # downloads for the Default app that have had their time
+            tidy(self._playback_folder(), self._storage())
         for session in self._sessions:
             session.kill()
         for provider in [*self.providers.values(), *self._retired]:
@@ -389,6 +422,22 @@ class CueApp(App[None]):
         mode = self.audio_mode(provider_name)
         return provider.for_language(mode) if mode is not None else provider
 
+    def _playback_folder(self) -> Path:
+        folder = self.config.playback.folder
+        return Path(folder).expanduser() if folder else downloads_dir()
+
+    def _storage(self) -> Storage:
+        return Storage(self.config.playback.keep_hours, self.config.playback.max_mb)
+
+    def local_relay(self) -> LocalRelay:
+        """The relay on 127.0.0.1 that gives simpler players links they can open; started on first use."""
+        with self._relay_lock:
+            if self._relay is None:
+                relay = LocalRelay(ffmpeg=find_ffmpeg())
+                relay.start()
+                self._relay = relay
+            return self._relay
+
     def play(self, provider_name: str, show: Show, queue: Sequence[Episode], index: int) -> None:
         factory = self._player_factory
         note = ""
@@ -407,7 +456,14 @@ class CueApp(App[None]):
                 return
 
             def factory() -> Player:
-                return backend.create(program, options)
+                # Players that can't send a source's headers, play HLS or open links get
+                # a relay link, one continuous stream or a downloaded file instead.
+                return route_player(
+                    backend.create(program, options), title=backend.title, headers=backend.headers,
+                    hls=bool(options.get("hls", backend.hls)), links=backend.links, relay=self.local_relay,
+                    folder=self._playback_folder(), quality=self.config.playback.quality or self.config.quality,
+                    storage=self._storage(),
+                )
 
             if not backend.controls:
                 note = f"Playing in {backend.title}, which Cue can't control: no auto-skip or resume point. Press q when done."
@@ -472,7 +528,7 @@ class CueApp(App[None]):
     def cast(
         self, provider_name: str, show: Show, queue: Sequence[Episode], *, provider: Provider | None = None,
     ) -> None:
-        """List a queue on the TV; VLC there opens it from its Network tab.
+        """Cast a queue: to VLC, which opens it from its Network tab, or to an AirPlay or Chromecast TV.
 
         ``provider`` keeps a playing session's SUB/DUB binding when it moves to the TV.
         """
@@ -487,6 +543,28 @@ class CueApp(App[None]):
             return
         # Bound now, like playback: a later SUB/DUB change must not alter this queue.
         provider = provider if provider is not None else self._playback_provider(provider_name)
+        queue = list(queue)
+        if not devices.supported():
+            self._cast_to_vlc(server, provider_name, provider, show, queue)
+            return
+
+        def chosen(target: devices.Device | str | None) -> None:
+            if target == DLNA:
+                self._cast_to_vlc(server, provider_name, provider, show, queue)
+            elif isinstance(target, devices.Device):
+                self._last_tv = target.identifier
+                self.run_worker(self._cast_to_tv(server, target, provider_name, provider, show, queue),
+                                group="cast", exclusive=True)
+
+        self.push_screen(CastPicker(self.airplay_credentials(), server.name, self._last_tv), callback=chosen)
+
+    @staticmethod
+    def airplay_credentials() -> Path:
+        return app_dir() / "airplay.json"
+
+    def _cast_to_vlc(
+        self, server: CastServer, provider_name: str, provider: Provider, show: Show, queue: list[Episode],
+    ) -> None:
         url = server.publish(provider_name, provider, show, queue)
         self.notify(
             f"On the TV, open VLC → Network → {server.name} → {show.title}.\nDirect link: {url}",
@@ -494,6 +572,58 @@ class CueApp(App[None]):
         )
         count = len(queue)
         self.set_status(f"casting {show.title} ({count} item{'s' if count != 1 else ''}) to {server.base_url}")
+
+    async def _cast_to_tv(
+        self, server: CastServer, device: devices.Device, provider_name: str, provider: Provider, show: Show,
+        queue: list[Episode],
+    ) -> None:
+        """Play a queue on an AirPlay or Chromecast TV, moving on as each episode finishes."""
+        generation, index = server.publish_queue(provider_name, provider, show, queue)
+        credentials = self.airplay_credentials()
+        receiver: devices.Receiver | None = None
+        paired = False
+        try:
+            while index < server.queue_length(generation):
+                try:
+                    if device.needs_pairing and not paired:
+                        raise devices.PairingNeeded(f"{device.name} wants a code first")
+                    if receiver is None:
+                        self.set_status(f"connecting to {device.name}…")
+                        receiver = await devices.connect(device, credentials)
+                    media = await server.media(generation, index)
+                    self.notify(f"{media.title}", title=f"Playing on {device.name}", timeout=6)
+                    self.set_status(f"casting {media.title} to {device.name}")
+                    await receiver.play(media)
+                except devices.PairingNeeded:
+                    if paired:
+                        raise
+                    if receiver is not None:
+                        await receiver.close()
+                        receiver = None
+                    paired = await self._pair(device, credentials)
+                    if not paired:
+                        self.set_status("casting cancelled")
+                        return
+                    continue
+                if not server.finished(generation, index):
+                    break  # stopped on the TV, or something else took over
+                index += 1
+            self.set_status(f"done casting to {device.name}")
+        except (devices.DeviceError, ProviderError) as exc:
+            self.notify(str(exc), title=f"Casting to {device.name} stopped", severity="error", timeout=12)
+            self.set_status(f"casting to {device.name} stopped")
+        finally:
+            if receiver is not None:
+                await receiver.close()
+
+    async def _pair(self, device: devices.Device, credentials: Path) -> bool:
+        async def ask_code() -> str | None:
+            return await self.push_screen_wait(PairingDialog(device.name))
+
+        self.set_status(f"pairing with {device.name}: a code should appear on the TV")
+        await devices.pair(device, credentials, ask_code)
+        self.notify(f"Paired with {device.name}", title="Cast", timeout=6)
+        return True
 
     # -- downloads -----------------------------------------------------------------
 

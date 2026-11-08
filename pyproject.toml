@@ -15,6 +15,9 @@ dependencies = [
     "httpx>=0.27",
     "rapidfuzz>=3.0",
     "tomlkit>=0.13",
+    "cryptography>=42",  # decrypting HLS pieces while downloading
+    "pyatv>=0.16",  # casting to AirPlay TVs
+    "PyChromecast>=14",  # casting to Chromecast TVs
 ]
 
 [project.optional-dependencies]

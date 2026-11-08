@@ -35,6 +35,7 @@ import httpx
 
 from cue import __version__
 from cue.cast import hls
+from cue.cast.devices import Media
 from cue.cast.network import lan_address
 from cue.cast.ssdp import Advertiser
 from cue.player.session import RESUME_MIN, WATCHED_AT, PlaybackSession
@@ -61,6 +62,7 @@ PLAYLIST_TYPE = "application/vnd.apple.mpegurl"
 # VLC's DLNA client only plays items whose protocolInfo is a video/ type; it then
 # detects HLS from the response itself.
 ITEM_PROTOCOL = "http-get:*:video/mp2t:*"
+_MEDIA_PATH = re.compile(r"/(?:play|r|s)/")  # what TVs play; the rest is the DLNA server's own pages
 _HOST = re.compile(r"[A-Za-z0-9.\-]+(?::\d{1,5})?|\[[0-9A-Fa-f:.]+\](?::\d{1,5})?")
 
 
@@ -197,6 +199,13 @@ class CastServer:
 
     def publish(self, provider_name: str, provider: Provider, show: Show, queue: Sequence[Episode]) -> str:
         """Make a queue available to the TV; returns the URL of its first item."""
+        generation, first = self.publish_queue(provider_name, provider, show, queue)
+        return self.item_url(generation, first)
+
+    def publish_queue(
+        self, provider_name: str, provider: Provider, show: Show, queue: Sequence[Episode],
+    ) -> tuple[int, int]:
+        """Make a queue available to the TV; returns its generation and the item to start with."""
         entry = self._store.get_history(provider_name, show.id)
         resume = {
             index: entry.position for index, episode in enumerate(queue)
@@ -212,7 +221,39 @@ class CastServer:
                 for key in [key for key in self._resolved if key[0] == old]:
                     del self._resolved[key]
             self.update_id += 1
-        return f"{self.base_url}/play/{cast.generation}/{next(iter(resume), 0)}"
+        return cast.generation, next(iter(resume), 0)
+
+    def item_url(self, generation: int, index: int) -> str:
+        return f"{self.base_url}/play/{generation}/{index}"
+
+    async def media(self, generation: int, index: int) -> Media:
+        """An item for a TV Cue tells what to play (AirPlay, Chromecast): resolved, with its type."""
+        cast = self.cast(generation)
+        if cast is None or not 0 <= index < len(cast.queue):
+            raise ProviderError("This cast was replaced")
+        url = self.item_url(generation, index)
+        content_type = await asyncio.to_thread(self._content_type, url)
+        return Media(url, cast.label(index), content_type, cast.resume.get(index, 0.0))
+
+    def _content_type(self, url: str) -> str:
+        """Open an item as a TV would, which also resolves it; Chromecast needs the type up front."""
+        try:
+            with httpx.Client(trust_env=False, timeout=RESOLVE_TIMEOUT + 15) as client, client.stream("GET", url) as response:
+                if response.status_code >= 400:
+                    raise ProviderError(response.read().decode("utf-8", "replace").strip()
+                                        or f"HTTP {response.status_code}")
+                return response.headers.get("content-type", "video/mp4").split(";")[0].strip()
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Cue's cast server didn't answer ({type(exc).__name__})") from exc
+
+    def finished(self, generation: int, index: int) -> bool:
+        """Whether the TV watched this item to the end (as far as its requests show)."""
+        cast = self.cast(generation)
+        return cast is not None and 0 <= index < len(cast.queue) and cast.queue[index].number in cast.watched
+
+    def queue_length(self, generation: int) -> int:
+        cast = self.cast(generation)
+        return len(cast.queue) if cast is not None else 0
 
     def _status(self, text: str) -> None:
         if self._on_status is not None:
@@ -511,6 +552,22 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _error(self, status: int, message: str, head: bool = False) -> None:
         self._reply(status, message + "\n", "text/plain; charset=utf-8", head=head)
+
+    def end_headers(self) -> None:
+        # Chromecast's receiver is a web page: it may read media only from servers that allow it.
+        if _MEDIA_PATH.match(urlsplit(self.path).path):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+        super().end_headers()
+
+    def do_OPTIONS(self) -> None:  # a CORS preflight, for range requests
+        self.send_response(204)
+        if _MEDIA_PATH.match(urlsplit(self.path).path):
+            self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", self.headers.get("Access-Control-Request-Headers", "*"))
+            self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     # -- routing -----------------------------------------------------------------------
 

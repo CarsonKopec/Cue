@@ -1,4 +1,4 @@
-"""HLS playlist rewriting for the cast relay.
+"""HLS playlist rewriting for the cast relay and the local relay (cue.player.relay).
 
 Every URI in a playlist is replaced with a relay URL, so the TV's player fetches
 playlists, segments and keys through Cue, which adds the headers the source needs.
@@ -45,8 +45,12 @@ def is_master(text: str) -> bool:
     return "#EXT-X-STREAM-INF" in text
 
 
-def _attributes(tag: str) -> dict[str, str]:
+def attributes(tag: str) -> dict[str, str]:
+    """A tag's attribute list, ``#EXT-X-KEY:METHOD=AES-128,URI="..."`` -> {"METHOD": ..., "URI": ...}."""
     return {key: value.strip('"') for key, value in _ATTRIBUTE.findall(tag.partition(":")[2])}
+
+
+_attributes = attributes
 
 
 def _quote(value: str) -> str:
@@ -120,6 +124,58 @@ def rewrite_media(text: str, base_url: str, register: Register, *, track_progres
         elapsed += duration
         duration = 0.0
     return "\n".join(output) + "\n", elapsed
+
+
+def single_variant(text: str, height: int | None = None) -> str:
+    """A master playlist cut down to one video variant and that variant's default audio.
+
+    The variant is the best one, or with ``height`` the tallest at or below it (the
+    smallest when none is). FFmpeg reads every variant and audio track it is given;
+    this leaves it exactly one of each, so joining the stream into one file keeps the
+    language the source marks as default. Subtitle and I-frame entries are dropped.
+    """
+    lines = [line.strip() for line in text.lstrip("﻿").splitlines() if line.strip()]
+    variants: list[tuple[dict[str, str], str, str]] = []  # attributes, tag, URI
+    audio: list[tuple[dict[str, str], str]] = []
+    for position, line in enumerate(lines):
+        if line.startswith("#EXT-X-STREAM-INF:") and position + 1 < len(lines) and not lines[position + 1].startswith("#"):
+            variants.append((_attributes(line), line, lines[position + 1]))
+        elif line.startswith("#EXT-X-MEDIA:") and _attributes(line).get("TYPE") == "AUDIO":
+            audio.append((_attributes(line), line))
+    if not variants:
+        return text
+
+    def bandwidth(variant: tuple[dict[str, str], str, str]) -> int:
+        try:
+            return int(variant[0].get("BANDWIDTH", "0"))
+        except ValueError:
+            return 0
+
+    def tall(variant: tuple[dict[str, str], str, str]) -> int:
+        match = re.fullmatch(r"\d+x(\d+)", variant[0].get("RESOLUTION", ""))
+        return int(match[1]) if match else 0
+
+    chosen_variant = max(variants, key=bandwidth)
+    if height is not None:
+        fitting = [variant for variant in variants if 0 < tall(variant) <= height]
+        sized = [variant for variant in variants if tall(variant)]
+        if fitting:
+            chosen_variant = max(fitting, key=lambda variant: (tall(variant), bandwidth(variant)))
+        elif sized:
+            chosen_variant = min(sized, key=lambda variant: (tall(variant), bandwidth(variant)))
+        elif height <= 1:  # "worst", with no resolutions listed: the smallest by bitrate
+            chosen_variant = min(variants, key=bandwidth)
+    attributes, tag, uri = chosen_variant
+    output = ["#EXTM3U"]
+    group = attributes.get("AUDIO")
+    if group:
+        choices = [(attrs, line) for attrs, line in audio if attrs.get("GROUP-ID") == group]
+        chosen = next((line for attrs, line in choices if attrs.get("DEFAULT") == "YES"), choices[0][1] if choices else None)
+        if chosen is not None:
+            output.append(re.sub(r"DEFAULT=\w+", "DEFAULT=YES", chosen))
+    tag = re.sub(r',?(?:SUBTITLES|CLOSED-CAPTIONS)="[^"]*"', "", tag)
+    output += [tag, uri]
+    return "\n".join(output) + "\n"
 
 
 def wrap_media(media_url: str, renditions: Sequence[Rendition]) -> str:

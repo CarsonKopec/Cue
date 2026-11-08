@@ -1,0 +1,21 @@
+# Every push and pull request: test, build and start Cue on Windows, Linux and macOS.
+# The builds are kept for a while under the run's artifacts, to try before a release.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore: ["**.md", "assets/**", "LICENSE"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml

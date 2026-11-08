@@ -81,3 +81,12 @@ def find_vlc() -> str | None:
     if found:
         return found
     return next((str(path) for path in _vlc_locations() if path.is_file()), None)
+
+
+def find_ffmpeg() -> str | None:
+    """FFmpeg, which joins a stream into one file or one continuous stream for simple players."""
+    override = os.environ.get("CUE_FFMPEG")
+    if override:
+        return shutil.which(override) or (override if Path(override).is_file() else None)
+    executable = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    return beside_app(executable) or shutil.which(executable)

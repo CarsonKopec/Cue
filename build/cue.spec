@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for a single-file, console-attached cue.exe (the TUI *is* the app).
+# PyInstaller spec for a single-file, console program (the TUI *is* the app): dist/cue.exe on
+# Windows, dist/cue on Linux and macOS. Build it on each platform for that platform.
 # From the repo root:  python build/release.py   (or: pyinstaller build/cue.spec)
 import importlib.util
 import sys
@@ -34,6 +35,10 @@ hiddenimports = (
     + collect_submodules("rapidfuzz")
     + collect_submodules("httpx")
     + collect_submodules("tomlkit")
+    # Casting to AirPlay and Chromecast TVs; pyatv loads its protocols by name.
+    + collect_submodules("pyatv", filter=_no_tests)
+    + collect_submodules("pychromecast")
+    + collect_submodules("zeroconf")
     + [module for package in PLUGIN_STDLIB_PACKAGES for module in collect_submodules(package, filter=_no_tests)]
     + PLUGIN_STDLIB_MODULES
 )
@@ -67,7 +72,8 @@ exe = EXE(
     a.datas,
     [],
     name="cue",
-    icon=str(root / "assets" / "cue.ico"),  # rendered from assets/cue-icon.svg
+    # Rendered from assets/cue-icon.svg. Only Windows programs carry an icon of their own.
+    icon=str(root / "assets" / "cue.ico") if sys.platform == "win32" else None,
     console=True,
     upx=False,
     runtime_tmpdir=None,

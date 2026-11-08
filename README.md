@@ -34,7 +34,7 @@ Cue uses VLC by default and detects its standard Windows installation under
 `C:\Program Files\VideoLAN\VLC` (or `Program Files (x86)`). A custom installation
 can be selected with the `CUE_VLC` environment variable pointing to `vlc.exe`.
 
-**Release zip:** download `cue-<version>-win64.zip` (or just `cue.exe`) from the
+**Windows:** download `cue-<version>-windows-x64.zip` (or just `cue.exe`) from the
 [latest release](https://github.com/CarsonKopec/Cue/releases/latest), unzip it and run
 `cue.exe`. `SHA256SUMS.txt` in the release lists their checksums. The first time,
 it asks whether to install itself:
@@ -56,6 +56,24 @@ fine without installing, straight from the unzipped folder.
 
 VLC is installed separately. A complete portable VLC folder at `cue\vlc\` is also
 found, as is VLC on `PATH`.
+
+**Linux and macOS:** the same release has `cue-linux-x64` and `cue-macos-arm64` (Apple
+silicon), each a single program, and `.tar.gz` archives with the README. Make it
+executable and put it somewhere on your PATH:
+
+```bash
+chmod +x cue-linux-x64 && mv cue-linux-x64 ~/.local/bin/cue
+```
+
+The macOS program isn't signed, so Gatekeeper blocks it the first time. Clear the flag
+it puts on downloads before you move it:
+
+```bash
+xattr -d com.apple.quarantine cue-macos-arm64
+```
+
+Install VLC or mpv with your package manager (or Homebrew); Cue finds them on PATH.
+`cue install` is for Windows only; elsewhere the program on your PATH is all there is.
 
 **From source**, with conda:
 
@@ -97,6 +115,39 @@ python -m cue --config config-vlc.toml
 It starts in the Anime group (HiAnime); `Tab` moves on to All, Movies and Shows (HydraHD).
 `-g movies` starts in Movies.
 The exe accepts it too: `cue.exe --config <path to>\config-vlc.toml`.
+
+## Updates
+
+The downloaded Cue (on Windows, Linux or macOS) keeps itself and its plugins up to
+date. Once a day, when it starts, it asks GitHub for Cue's latest release in the
+background. Startup never waits for this, and being offline is ignored.
+
+- **A newer Cue** is downloaded and checked against the release's `SHA256SUMS.txt`; a
+  file that doesn't match is thrown away. Windows won't overwrite a running program
+  but will rename it, so Cue moves its own `cue.exe` aside and puts the new one in its
+  place. You're told it's installed, and it runs from the next time you open Cue. For
+  the installed copy, Settings → Apps shows the new version too. On Linux and macOS
+  the new program simply takes the old one's place, and each system gets its own
+  build from the release.
+- **Newer plugins** from the catalog are installed straight away, checked against the
+  catalog's checksums. Plugins you've turned off are left alone, and your providers'
+  settings and on/off choices are kept.
+
+```toml
+[updates]
+check = true      # look once a day (the downloaded program only, not a source checkout)
+install = true    # false: just say what's available
+```
+
+To update right now, without waiting for the daily check:
+
+```bash
+cue update
+```
+
+`cue update --check` only reports what's available. Running from source, Cue doesn't
+replace itself (update with `git pull`, or `pip install -U`), but `cue update` still
+updates plugins.
 
 ## Setup
 
@@ -142,7 +193,7 @@ Review any other old mpv arguments before using them with VLC.
 
 To keep the optional mpv backend, install [mpv](https://mpv.io/installation/) and set
 `player = "mpv"`. Cue finds `mpv.exe` beside `cue.exe`, on `PATH`, or through
-`CUE_MPV`. Jellyfin playback currently requires this backend (see limitations below).
+`CUE_MPV`. Any other video player works too; see [Players](#players).
 
 ## Keys
 
@@ -263,7 +314,7 @@ disabled = []             # plugins that are installed but turned off
 
 | Provider | Source | Notes |
 |---|---|---|
-| `jellyfin` | Jellyfin server | REST API with an API key, direct-play streams. Playback currently requires `player = "mpv"` for its authorization header. Each season appears as its own show (`Show`, `Show Season 2`, ...) because MAL numbers episodes per season. AniList/AniDB/Kitsu IDs from the metadata feed the MAL lookup. |
+| `jellyfin` | Jellyfin server | REST API with an API key, direct-play streams. Players that can't send its login header (VLC, for one) get the stream through Cue's [local relay](#playing-streams-in-any-player). Each season appears as its own show (`Show`, `Show Season 2`, ...) because MAL numbers episodes per season. AniList/AniDB/Kitsu IDs from the metadata feed the MAL lookup. |
 | `local` | Folders on disk | Parses `Show Name - 01.mkv`, `[Group] Show - 01 (1080p).mkv`, `Show.S01E02.mkv`, `Show Episode 3.mkv`, and bare `01.mkv` inside `Show/Season 2/`. Several files for one episode become quality choices. |
 | `anime` | HiAnime catalog (**`anime` plugin**) | Discovers SUB/DUB server choices and resolves supported public player data to media URLs. See the setup and limitations below. |
 | `hydra` | HydraHD catalog (**`hydra` plugin**) | Movies and TV. Each season appears as its own show; a movie is a one-item queue. Plays through the site's VixSrc player with its subtitle tracks. See the setup and limitations below. |
@@ -355,10 +406,11 @@ HydraHD because the site does not offer one.
 
 | Player | From | What Cue can do with it |
 |---|---|---|
-| VLC | built in (default) | Everything: resume, auto-skip, auto-next, subtitle choice. Sends only Referer and User-Agent headers. |
-| mpv | built in | Everything, and any HTTP header a source needs (Jellyfin's login, for one). |
+| VLC | built in (default) | Everything: resume, auto-skip, auto-next, subtitle choice. Sources needing headers VLC can't send (Jellyfin's login) play through Cue's local relay. |
+| mpv | built in | Everything, and any HTTP header a source needs. |
+| Another program | built in | Any player: MPC-HC, PotPlayer, KMPlayer, SMPlayer, and others. Cue runs it with a link it can open. Cue can't control it while it plays. |
 | ffplay | `ffplay` plugin | Starts at your resume point and sends any header. Cue can't control it while it plays, so there's no auto-skip and no new resume point; closing its window returns to Cue. Needs [FFmpeg](https://ffmpeg.org/download.html). |
-| Default app | `default-app` plugin | Opens files on this PC (Local provider, downloads) in your system's default video app: the app chosen in Windows' Default apps, macOS `open`, or Linux `xdg-open`. Streams need VLC or mpv. Press `q` in Cue when you're done. |
+| Default app | `default-app` plugin | Your system's default video app: the app chosen in Windows' Default apps (Media Player, say), macOS `open`, or Linux `xdg-open`. Files open directly; a streamed episode is downloaded first. Press `q` in Cue when you're done. |
 
 Pick one in the Players tab (`d`), or set `player = "<name>"` in the config. Cue finds
 each program by itself; to point at a specific copy, set its path in the Players tab
@@ -372,6 +424,58 @@ fullscreen = true
 
 For a player Cue can't control, the Now Playing screen says so; `n` still moves to the
 next episode.
+
+**Another program** runs whatever you point it at. Set its program and arguments in the
+Players tab (`Enter`) or the config. `{url}` is the link to play, `{title}` the
+episode's title, and `{start}` and `{start_ms}` the resume point in seconds and
+milliseconds:
+
+```toml
+player = "other"
+
+[players.other]
+path = "C:/Program Files/MPC-HC/mpc-hc64.exe"
+arguments = '"{url}" /start {start_ms} /fullscreen'
+hls = true          # false if it can't play HLS (.m3u8) links
+```
+
+### Playing streams in any player
+
+Streams from HydraHD, HiAnime and Jellyfin need HTTP headers (a Referer, or a login),
+and often come as HLS playlists with audio in separate tracks. Most players can't do
+all of that, so Cue steps in only where a player needs it:
+
+| The player | What Cue gives it |
+|---|---|
+| Can send the headers and plays HLS (mpv, ffplay) | The source's own link |
+| Plays HLS but can't send the headers (VLC for Jellyfin, Another program) | A link to Cue's **local relay**, which adds the headers |
+| Can't play HLS (Another program with `hls = false`) | One continuous MPEG-TS stream, joined by FFmpeg |
+| Only opens files (Default app) | The episode, downloaded to a temporary MP4 first, with progress on the Now Playing screen |
+
+The relay listens on `127.0.0.1` only, so nothing outside this PC can reach it. Joining a
+stream and the downloads use [FFmpeg](https://ffmpeg.org/download.html), on `PATH`,
+next to `cue.exe` or set with `CUE_FFMPEG`; yt-dlp downloads too if FFmpeg is missing.
+Both keep the source's best video and its default audio language.
+
+Downloads for players that only open files are quick and easy on a small disk:
+
+- **Only the finished file is written.** Cue fetches pieces 12 at a time into memory and
+  hands them straight to FFmpeg, so an episode needs about its own size free, not
+  twice that. Before starting, Cue estimates the size from the stream and says so if
+  the folder doesn't have room.
+- **Encrypted streams** (AES-128, as HydraHD's are) are decrypted by Cue on those same
+  download threads, so FFmpeg reads plain pieces over one connection.
+- For example, a 24-minute 1080p HiAnime episode (258 MB) downloads in about 5 seconds,
+  and a 58-minute HydraHD episode at 720p (656 MB) in about 50.
+- **Episodes are deleted when you're done**, and the folder has a size limit:
+
+```toml
+[playback]
+folder = ""        # where temporary episodes go; empty: %TEMP%\cue-playback
+quality = ""       # such as "720" for smaller downloads; empty: the main quality setting
+keep_hours = 0     # 0: delete each episode when you stop watching; 48 keeps them two days
+max_mb = 4096      # the folder's size limit, oldest episodes first; 0: no limit
+```
 
 ## Writing a plugin
 
@@ -457,6 +561,9 @@ register_player(PlayerBackend(
     missing="Install My Player from example.com.",
     controls=False,                  # Cue can't follow its position
     platforms=("win32",),            # sys.platform values; empty for all
+    headers=frozenset({"referer"}),  # what it can send; Cue relays sources needing more
+    hls=True,                        # False: Cue gives it one continuous stream
+    links=True,                      # False: Cue downloads streamed episodes for it first
 ))
 ```
 
@@ -565,7 +672,9 @@ VLC on an Xbox can play what you pick in Cue, as can VLC on a phone or tablet or
 another DLNA player on your home network. VLC on Xbox can't be controlled by
 another program, so Cue doesn't push playback to it. Instead, Cue runs a small
 DLNA media server: what you cast appears in VLC's **Network** tab, and the TV plays
-it through Cue, which adds the headers and subtitles the source needs.
+it through Cue, which adds the headers and subtitles the source needs. AirPlay and
+Chromecast TVs are told what to play instead; see
+[AirPlay and Chromecast](#airplay-and-chromecast) below.
 
 Turn it on in your config and restart Cue:
 
@@ -625,11 +734,34 @@ Keep Cue running on the PC while you watch, because the video passes through it.
 - Anyone on your network can play what you cast, so use it only on a trusted home
   network.
 
+### AirPlay and Chromecast
+
+Cue can also start playback on **AirPlay** TVs (Apple TV, and TVs with AirPlay built in,
+such as recent Samsung, LG and Sony models) and **Chromecast** devices (Chromecast,
+Google TV, and TVs with Chromecast built in). They still play through Cue's cast
+server, so turn on `[cast]` as above.
+
+1. Press `t` on a show or on Now Playing. Cue lists VLC (the Network tab) first, then
+   the AirPlay and Chromecast TVs it finds in a few seconds; `r` looks again.
+2. Pick a TV. It starts the episode where you left off, and when an episode ends, the
+   next one starts. Stopping on the TV ends the queue.
+
+An AirPlay TV that asks for a code (most TVs other than an Apple TV) shows one the first
+time; type it into Cue. Cue remembers the pairing in `airplay.json`, so it's asked for
+once.
+
+- Pause, seek and stop with the TV's remote. Resume points and watched markers are
+  saved as with VLC.
+- Keep Cue running while you watch: the video passes through it, and AirPlay stops
+  when Cue closes.
+- Only devices that play video are listed, not speakers or speaker groups.
+- TVs must be on (not in standby) to be found.
+
 ## VLC limitations
 
-- Cue forwards the Referer and User-Agent needed by HiAnime and HydraHD streams.
-  Other required HTTP headers, including Authorization and Cookie, are rejected
-  with an error. This means the current Jellyfin provider needs `player = "mpv"`.
+- VLC sends the Referer and User-Agent that HiAnime and HydraHD streams need. Sources
+  that need other headers, such as Jellyfin's Authorization, play through Cue's local
+  relay instead, which adds them.
 - Subtitle files requiring unsupported formats or a redirect to another host
   cannot be loaded automatically. The subtitle picker can select another track.
 - Auto-next requires VLC to report a known duration and a stop near the end of that
@@ -638,7 +770,8 @@ Keep Cue running on the PC while you watch, because the video passes through it.
 
 ## Files
 
-Everything lives in `%APPDATA%\cue\` (set `CUE_HOME` to use another folder):
+Everything lives in `%APPDATA%\cue\` on Windows and `~/.config/cue/` on Linux and macOS
+(set `CUE_HOME` to use another folder):
 
 | File | Contents |
 |---|---|
@@ -649,6 +782,8 @@ Everything lives in `%APPDATA%\cue\` (set `CUE_HOME` to use another folder):
 | `providers\` | Single-file provider modules (the older way to add one) |
 | `cue.log` | Log file, useful when something goes wrong |
 | `install-declined` | Present after answering *never* to the install question |
+| `update-check.json` | When Cue last looked for updates (it looks once a day) |
+| `airplay.json` | Pairings with AirPlay TVs that asked for a code |
 
 An installed `cue.exe` lives in `%LOCALAPPDATA%\Programs\Cue`.
 
@@ -663,9 +798,14 @@ With the `cue` environment active:
 python build/release.py --yt-dlp C:/tools/yt-dlp.exe
 ```
 
-Without activating it, prefix the command with `conda run -n cue`. This runs PyInstaller with [build/cue.spec](build/cue.spec) (one file, console attached,
-Textual's assets included), checks `dist/cue.exe --version`, and writes
-`dist/cue-<version>-win64.zip`. Install VLC separately on the target machine.
+Without activating it, prefix the command with `conda run -n cue`. This runs PyInstaller
+with [build/cue.spec](build/cue.spec) (one file, console attached, Textual's assets
+included) and makes `dist/cue.exe`, or `dist/cue` on Linux and macOS. Build on each
+system for that system. The script starts the build with `--version` and
+`--smoke-test`, then puts this platform's release files in `dist/release/`: the program
+under its release name (`cue.exe`, `cue-linux-x64`, `cue-macos-arm64`) and
+`cue-<version>-<platform>.zip` (Windows) or `.tar.gz`. Install VLC separately on the
+target machine.
 The optional `--mpv C:/tools/mpv` flag still bundles an mpv folder as `mpv\`, or accepts
 a single `mpv.exe`, for users selecting `player = "mpv"`. Both bundle flags are optional.
 
@@ -680,7 +820,8 @@ The logo lives in [assets/](assets/):
 
 `cue.ico` is rendered from `cue-icon.svg`. Re-render it at those sizes if the icon changes.
 
-`cue.exe --smoke-test` starts the TUI headless, renders the Home screen and exits. Run it
+`cue.exe --smoke-test` starts the TUI headless, renders the Home screen, checks that the
+AirPlay, Chromecast and decryption libraries made it into the build, and exits. Run it
 on a clean machine to check a build.
 
 The release script runs that smoke test too, with a throwaway Cue folder, so a build
@@ -688,8 +829,12 @@ that can't start fails.
 
 ### Releasing
 
-The [Release workflow](.github/workflows/release.yml) builds `cue.exe` on GitHub's
-Windows runners and publishes it, only when you start it:
+Every push and pull request runs [CI](.github/workflows/ci.yml): the tests, then a build
+that's started and smoke-tested on Windows, Linux (x64) and macOS (Apple silicon). Each
+run keeps the three builds as artifacts for a while, to try before a release.
+
+The [Release workflow](.github/workflows/release.yml) does the same builds and publishes
+them together, only when you start it:
 
 1. Raise `__version__` in [cue/__init__.py](cue/__init__.py) and add its entry at the
    top of [CHANGELOG.md](CHANGELOG.md). That entry becomes the release notes.
@@ -699,9 +844,11 @@ Windows runners and publishes it, only when you start it:
    gh workflow run release.yml
    ```
 
-It runs the tests, builds with `build/release.py` (smoke test included), tags the commit
-`v<version>` and attaches `cue.exe`, `cue-<version>-win64.zip` and `SHA256SUMS.txt`. A
-version that's already released is refused. The workflow has options for a draft
+It runs the tests and builds with `build/release.py` (smoke test included) on all three
+systems, tags the commit `v<version>`, and attaches each system's program and archive
+(`cue.exe`, `cue-linux-x64`, `cue-macos-arm64`, `cue-<version>-<platform>.zip` or
+`.tar.gz`) with one `SHA256SUMS.txt` covering them all. A version that's already
+released is refused. The workflow has options for a draft
 (publish it yourself after checking), a pre-release, and a dry run that only tests and
 builds and keeps the files as a downloadable workflow artifact:
 

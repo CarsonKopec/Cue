@@ -1,3 +1,134 @@
+# Unreleased: AirPlay, Chromecast, and Cue on Linux and macOS
+
+- **Cast to AirPlay and Chromecast TVs.** Pressing `t` now lists VLC (the Xbox's
+  Network tab, as before) and the AirPlay and Chromecast TVs Cue finds on the network.
+  - Pick one and Cue tells it what to play, from where you left off, and starts the
+    next episode when one ends.
+  - AirPlay TVs that ask for a code are paired once; the pairing is kept in
+    `airplay.json`.
+  - Uses [pyatv](https://github.com/postlund/pyatv) for AirPlay and
+    [PyChromecast](https://github.com/home-assistant-libs/pychromecast) for
+    Chromecast.
+  - Both play through the cast server, so headers, subtitles, resume points and
+    watched markers work as with VLC. The cast server now allows Chromecast's
+    receiver (a web page) to read media (CORS).
+  - Speakers and speaker groups aren't listed.
+- **Linux and macOS builds.** Releases now carry:
+  - `cue-linux-x64` and `cue-macos-arm64` beside `cue.exe`
+  - an archive per system
+  - one `SHA256SUMS.txt` for all of them
+
+  Automatic updates fetch the build for the system they run on. The Windows zip is now
+  named `cue-<version>-windows-x64.zip`.
+- **CI on every push**: tests, then a build that's started and smoke-tested on Windows,
+  Linux and macOS. The Release workflow publishes all three together.
+- The smoke test checks that the AirPlay, Chromecast and decryption libraries are in the
+  build.
+- Fixed: building without activating the conda environment could bundle another
+  environment's `libexpat.dll`, which broke anything that reads XML (pyexpat).
+  `build/release.py` now puts its own environment's DLLs first.
+
+Validation: **348 Cue tests passed** (11 new). They cover:
+- the cast server resolving items for a TV, with their type and resume point
+- CORS on media but not on the server's pages
+- moving on only after an episode finishes
+- leaving AirPlay speakers out
+- discovery surviving one library failing
+- Chromecast playback ending with its video, or with an error
+- the whole flow in the app: pick a TV, type its pairing code, play two episodes, stop
+  when one is stopped
+- each platform's release file name and program check
+
+The Windows build was made and smoke-tested here. Linux and macOS are built by CI.
+Live, Cue found a Samsung TV's AirPlay on this network. **Not verified**: pairing with
+and playing on a real AirPlay TV (the TV was off when tested), and any real Chromecast
+(none on this network).
+
+# Unreleased: automatic updates
+
+- **cue.exe updates itself.** Once a day at startup it asks GitHub for Cue's latest
+  release, in the background so startup never waits, and stays quiet if offline. A
+  newer `cue.exe` is downloaded over https and checked against the release's
+  `SHA256SUMS.txt`. Cue then renames its running copy aside and puts the new one in
+  place; it runs from the next start, and Settings → Apps shows the new version.
+- **Plugins update the same day**, from the catalog, checked against its checksums.
+  Plugins you've turned off are skipped, and providers keep their settings and on/off
+  state.
+- **`cue update`** does both now; `cue update --check` only reports. From source, Cue
+  says to update with `git pull` or `pip install -U`, and still updates plugins.
+- `[updates] check = true` and `install = true` control it; `install = false` only
+  announces what's available.
+
+Validation: **325 Cue tests passed** (11 new), covering:
+- reading the latest release and following GitHub's download redirect
+- refusing a checksum mismatch, a missing asset, a non-program file and an https→http
+  downgrade
+- swapping cue.exe for an installed copy (Settings → Apps version updated) and for a
+  portable one (registry untouched)
+- the once-a-day limit
+- plugin updates, with turned-off plugins skipped
+- the app installing, only announcing, staying quiet offline, and never checking when
+  turned off or run from source
+- `cue update` and `cue update --check`
+
+Before the update code was written, a running copy of `cue.exe` on this PC was renamed
+and a new one put in its place, which is the swap the update relies on.
+
+# Unreleased: any player can play streams
+
+- **Another program**: a built-in player that runs any video player (MPC-HC,
+  PotPlayer, KMPlayer, …) with arguments you set; `{url}`, `{title}`, `{start}` and
+  `{start_ms}` are filled in.
+- **A local relay** on `127.0.0.1` gives players links they can open:
+  - Players that can't send a source's headers get the stream through Cue, which
+    adds them. So VLC now plays Jellyfin, which used to need mpv.
+  - Players without HLS get one continuous MPEG-TS stream, joined by FFmpeg.
+  - A source's login still goes only to its own site.
+- **Windows' default app plays streams**: the default-app plugin (1.1.0) asks Cue to
+  download a streamed episode first, as an MP4 with progress shown on Now Playing,
+  then opens it. Media Player can't open stream links from another program.
+- Joining and downloading keep the source's best video and its default audio
+  language; FFmpeg does both, and yt-dlp downloads when FFmpeg is missing.
+- **Fast downloads**: Cue fetches a stream's pieces 12 at a time, straight from the
+  source. Brief failures are retried, and the relay keeps connections open between
+  pieces (HTTP/1.1).
+  - Encrypted streams (AES-128, as HydraHD's are) are decrypted by Cue on those
+    threads. FFmpeg then reads plain pieces over one connection, rather than opening
+    one per piece and decrypting each.
+  - A 24-minute 1080p HiAnime episode (258 MB) takes 5 s instead of 57.
+  - A 58-minute HydraHD episode at 720p (656 MB) takes 50 s instead of 83.
+- **Light on storage**, for small disks:
+  - Pieces wait in memory (24 at most) and go straight to FFmpeg, so only the finished
+    MP4 is ever written. The peak was exactly the finished file's size for both
+    episodes above.
+  - Before downloading, Cue estimates the episode's size from the stream and stops
+    with a clear message if the folder lacks room.
+  - Episodes are deleted when you stop watching (`keep_hours`), and the folder has a
+    size limit (`max_mb`, 4 GB by default; the oldest go first).
+  - `[playback] quality` downloads a smaller version (such as `"720"`), and
+    `[playback] folder` puts temporary episodes on another drive.
+- Hosts that disguise HLS pieces as images (`seg_00000.ts.jpg`, as HiAnime's does)
+  work: relay links carry the media extension FFmpeg requires.
+- Players declare what they can open (`headers`, `hls`, `links` on `PlayerBackend`),
+  and Cue only steps in where one needs it.
+
+Validation:
+- New tests run the relay on a real local socket with a Referer-protected source.
+- Tests also cover:
+  - the in-memory window and its retries
+  - AES-128 decryption, with the IV from the playlist or the piece's sequence number,
+    leaving SAMPLE-AES, byte ranges and encrypted init sections to FFmpeg
+  - download quality, the free-space check, tidying the folder and deleting episodes
+    when done
+- They cover the playlist cut-down, credentials going only to the source's own site,
+  routing, downloads with progress and cancelling, and the Another-program command
+  line; FFmpeg joins and saves a generated HLS stream when it's installed.
+- Live: through the relay, a real HydraHD episode played as 1080p video with its default
+  English audio, and as a continuous stream.
+- Not verified: the downloaded file opening in Windows' Media Player. It never
+  started from the test environment, even through Explorer, so try it in your own
+  terminal.
+
 # Cue 0.3.2: a logo — 2026-11-07
 
 - **Cue has a logo**: a rounded C around a play button, in Cue's orange on dark grey.

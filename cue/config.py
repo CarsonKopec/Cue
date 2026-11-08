@@ -86,6 +86,22 @@ class PluginsConfig:
 
 
 @dataclass
+class PlaybackConfig:
+    """Episodes Cue downloads for players that only open files (the Default app)."""
+
+    folder: str = ""  # where they go; empty: the system's temporary folder
+    quality: str = ""  # "720", "480", "worst" or "best"; empty: the main quality setting
+    keep_hours: float = 0.0  # 0: deleted when you stop or move on; more keeps them for replays
+    max_mb: int = 4096  # the most they may take together; the oldest go first; 0: no limit
+
+
+@dataclass
+class UpdatesConfig:
+    check: bool = True  # cue.exe looks for a new Cue and new plugins once a day
+    install: bool = True  # and installs them; false only says what's available
+
+
+@dataclass
 class Config:
     default_provider: str = "jellyfin"  # older configs; default_group replaced it
     default_group: str = ""  # the group searches start in; empty: the first one
@@ -101,6 +117,8 @@ class Config:
     subtitles: SubtitleConfig = field(default_factory=SubtitleConfig)
     cast: CastConfig = field(default_factory=CastConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
+    updates: UpdatesConfig = field(default_factory=UpdatesConfig)
+    playback: PlaybackConfig = field(default_factory=PlaybackConfig)
     path: Path | None = None
 
     @property
@@ -208,6 +226,12 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
     if cast_host and cast_interface:
         raise ConfigError("set either cast.host or cast.interface, not both")
     plugins = _get(document, "plugins", dict, {}, "")
+    updates = _get(document, "updates", dict, {}, "")
+    playback = _get(document, "playback", dict, {}, "")
+    keep_hours = _get(playback, "keep_hours", (int, float), 0, "playback.")
+    max_mb = _get(playback, "max_mb", int, PlaybackConfig.max_mb, "playback.")
+    if isinstance(keep_hours, bool) or keep_hours < 0 or isinstance(max_mb, bool) or max_mb < 0:
+        raise ConfigError("playback.keep_hours and playback.max_mb can't be negative")
 
     return Config(
         default_provider=_get(document, "default_provider", str, defaults.default_provider, ""),
@@ -236,6 +260,16 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
         plugins=PluginsConfig(
             catalog=_get(plugins, "catalog", str, DEFAULT_CATALOG, "plugins.").strip(),
             disabled=_str_list(plugins, "disabled", [], "plugins."),
+        ),
+        updates=UpdatesConfig(
+            check=_get(updates, "check", bool, True, "updates."),
+            install=_get(updates, "install", bool, True, "updates."),
+        ),
+        playback=PlaybackConfig(
+            folder=_get(playback, "folder", str, "", "playback.").strip(),
+            quality=str(_get(playback, "quality", (str, int), "", "playback.")).strip(),
+            keep_hours=float(keep_hours),
+            max_mb=max_mb,
         ),
         path=path,
     )

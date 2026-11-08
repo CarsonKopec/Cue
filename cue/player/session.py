@@ -234,6 +234,8 @@ class PlaybackSession:
         player.observe("duration", lambda value: self._on_duration(generation, value))
         player.observe("eof-reached", lambda value: value and self._actions.put_nowait((generation, "eof")))
         player.observe("error", lambda value: self._on_player_error(generation, value))
+        # Progress while Cue downloads an episode for a player that only opens files.
+        player.observe("message", lambda value: generation == self._generation and value and self._message(str(value)))
         player.on_close(lambda: self._actions.put_nowait((generation, "closed")))
         self._player = player
         try:

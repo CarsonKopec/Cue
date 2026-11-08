@@ -11,7 +11,7 @@ from pathlib import Path
 from cue import __version__
 from cue.config import ConfigError, config_path, load_config, log_path
 
-COMMANDS = ("install", "uninstall", "plugin", "plugins")  # see cue.commands
+COMMANDS = ("install", "uninstall", "update", "plugin", "plugins")  # see cue.commands
 
 
 def _setup_logging() -> None:
@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         return run(argv)
     parser = argparse.ArgumentParser(
         prog="cue", description="Keyboard-driven terminal media player with automatic intro/outro skipping.",
-        epilog="Other commands: cue install, cue uninstall, cue plugin (list|catalog|install|update|remove). "
+        epilog="Other commands: cue install, cue uninstall, cue update, cue plugin (list|catalog|install|update|remove). "
                "To search for one of these words, put -- first: cue -- install",
     )
     parser.add_argument("query", nargs="*", help="search for a show right away")
@@ -90,12 +90,38 @@ def _smoke_test(app: object) -> int:
         result["screen"] = type(app.screen).__name__
         result["providers"] = sorted(app.providers)
         result["fuzzy"] = [s.id for s in fuzzy_filter("frieren", [Show("a", "Sousou no Frieren"), Show("b", "Other")])]
+        result["tvs"] = _cast_libraries()
+        result["aes"] = _aes_works()
         app.exit()
 
     app.run(headless=True, size=(100, 30), auto_pilot=pilot)
-    ok = result.get("screen") == HomeScreen.__name__ and result.get("fuzzy") == ["a"]
+    ok = (result.get("screen") == HomeScreen.__name__ and result.get("fuzzy") == ["a"]
+          and result.get("tvs") == ["airplay", "chromecast"] and result.get("aes") is True)
     print(f"cue {__version__} smoke test {'ok' if ok else 'FAILED'}: {result}")
     return 0 if ok else 1
+
+
+def _cast_libraries() -> list[str]:
+    """The TV kinds a build can cast to, after importing what each needs (so a build missing them fails)."""
+    import pychromecast.controllers.media
+    import pychromecast.discovery
+    import pyatv.protocols.airplay
+    import pyatv.storage.file_storage  # noqa: F401
+
+    from cue.cast import devices
+
+    return devices.supported()
+
+
+def _aes_works() -> bool:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    from cue.player.relay import _can_decrypt, _decrypt
+
+    key, iv = bytes(range(16)), bytes(range(16, 32))
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    piece = encryptor.update(b"cue" + bytes([13]) * 13) + encryptor.finalize()
+    return _can_decrypt() and _decrypt(piece, key, iv) == b"cue"
 
 
 if __name__ == "__main__":
