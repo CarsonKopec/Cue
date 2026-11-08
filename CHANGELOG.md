@@ -1,3 +1,14 @@
+# Cue 0.3.1: install message fix — 2026-11-07
+
+- `cue install` and Cue's other commands no longer crash when the console can't show
+  a character such as the "→" in "Settings → Apps". This happened with piped output
+  and older consoles on Windows. Such characters now print as `?`. In 0.3.0 the
+  install still finished, but the command ended with an error.
+
+Validation: **314 Cue tests passed**, including a new test that runs `cue install`
+with its output going to a cp1252 stream; without the fix it fails with the original
+error.
+
 # Cue 0.3.0: search groups — 2026-11-07
 
 - **Search by group instead of by provider.** Movies, Shows and Anime are built in,

@@ -22,7 +22,19 @@ def _setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, handlers=[handler])
 
 
+def _tolerant_output() -> None:
+    """Print characters the console's code page lacks as ``?`` instead of crashing.
+
+    Piped output, or an old console, uses a code page like cp1252, which has no ``→``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _tolerant_output()
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in COMMANDS:
         from cue.commands import run

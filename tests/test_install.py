@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import sys
 import uuid
 from pathlib import Path
@@ -114,6 +115,20 @@ def test_user_registry_round_trip() -> None:
         registry.delete_key(key)
         registry.delete_key(r"Software\CueTests")
     assert registry.get(key, "Text") is None
+
+
+def test_install_messages_survive_a_console_without_unicode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Piped output on Windows is cp1252, which has no "→"; printing it once crashed cue install.
+    from cue.__main__ import main
+
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr("cue.commands.is_frozen", lambda: True)
+    monkeypatch.setattr("cue.commands.UserRegistry", lambda: FakeRegistry(""))
+    monkeypatch.setattr("cue.commands.install", lambda source, registry: (tmp_path / "cue.exe", True))
+    assert main(["install"]) == 0
+    out.flush()
+    assert "listed in Settings ? Apps" in out.buffer.getvalue().decode("cp1252")
 
 
 def test_install_command_from_source(capsys: pytest.CaptureFixture[str]) -> None:
