@@ -19,6 +19,11 @@
 - Now Playing says "searching for subtitles…" rather than naming OpenSubtitles.
 - Cue's version is 0.5.0, which the new plugins require; 0.4.1 refuses them with a
   message to update.
+- **A wiki.** The documentation moved to the
+  [GitHub wiki](https://github.com/CarsonKopec/Cue/wiki), with new pages on how playback,
+  the local relay, casting, plugins and updates work. The pages live in `docs/wiki/` and
+  are copied to the wiki on every push, so they change with the code. The README is now
+  a short introduction.
 
 Validation:
 - 9 new Cue tests:
