@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -285,9 +286,12 @@ def test_tidy_keeps_what_it_should(tmp_path: Path) -> None:
     assert [p.name for p in tmp_path.iterdir()] == ["newest.mp4"]  # the oldest went to fit 3 MB
 
     playing = episode("playing.mp4", 1, 5)
-    with playing.open("rb"):  # a player still has it open: it stays until next time
+    with playing.open("rb"):
         tidy(tmp_path, Storage(keep_hours=0, max_mb=0), spare={newest})
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["newest.mp4", "playing.mp4"]
+        # Windows can't delete a file a player has open, so it stays until next time;
+        # Linux and macOS delete it, and the player keeps reading what it has open.
+        kept = ["newest.mp4", "playing.mp4"] if sys.platform == "win32" else ["newest.mp4"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == kept
     tidy(tmp_path, Storage(keep_hours=0, max_mb=0))
     assert list(tmp_path.iterdir()) == []
     assert not old.exists() and not recent.exists() and not broken.exists()

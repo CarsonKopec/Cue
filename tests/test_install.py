@@ -37,6 +37,7 @@ class FakeRegistry:
         self.broadcasts += 1
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' PATH: semicolons, any letter case")
 def test_path_editing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     folder = tmp_path / "Programs" / "Cue"
     assert path_with("", folder) == str(folder)

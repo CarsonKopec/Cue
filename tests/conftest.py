@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -88,7 +89,8 @@ def fake_mpv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Callable[
 
     def factory() -> MpvPlayer:
         name = f"cue-test-{uuid.uuid4().hex[:12]}"
-        address = rf"\\.\pipe\{name}" if sys.platform == "win32" else os.path.join(str(tmp_path), f"{name}.sock")
+        # Like Cue's own: pytest's folders are too long for a Unix socket's path on macOS (104 bytes).
+        address = rf"\\.\pipe\{name}" if sys.platform == "win32" else os.path.join(tempfile.gettempdir(), f"{name}.sock")
         return MpvPlayer([sys.executable, str(FAKE_MPV)], address=address)
 
     return factory, log
