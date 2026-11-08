@@ -1,4 +1,4 @@
-# Unreleased: FFmpeg with cue install
+# Cue 0.4.1: FFmpeg with cue install — 2026-11-08
 
 - **`cue install` gets FFmpeg too**, which Cue needs to play streams in players that
   can't on their own (Windows' Media Player through the Default app).
