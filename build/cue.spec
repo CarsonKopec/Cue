@@ -67,6 +67,7 @@ exe = EXE(
     a.datas,
     [],
     name="cue",
+    icon=str(root / "assets" / "cue.ico"),  # rendered from assets/cue-icon.svg
     console=True,
     upx=False,
     runtime_tmpdir=None,

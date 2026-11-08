@@ -1,3 +1,15 @@
+# Cue 0.3.2: a logo — 2026-11-07
+
+- **Cue has a logo**: a rounded C around a play button, in Cue's orange on dark grey.
+  `cue.exe` now carries it as its icon, so Explorer, the taskbar and Settings → Apps
+  show it. The README opens with the "Cue" wordmark, with versions for GitHub's light
+  and dark themes.
+- [assets/](assets/) holds the app icon (SVG and 512 px PNG), the mark on its own, the
+  two wordmarks, and `cue.ico` with 16–256 px sizes.
+
+No code changes. The exe was rebuilt with the icon; it still passes the smoke test,
+and Windows extracts the new icon from it.
+
 # Cue 0.3.1: install message fix — 2026-11-07
 
 - `cue install` and Cue's other commands no longer crash when the console can't show

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/cue-wordmark-dark.svg">
+    <img src="assets/cue-wordmark-light.svg" alt="Cue" width="320">
+  </picture>
+</p>
+
 # Cue — Terminal Media Player
 
 A keyboard-driven TUI for browsing and watching shows and movies, with automatic
@@ -661,6 +668,17 @@ Textual's assets included), checks `dist/cue.exe --version`, and writes
 `dist/cue-<version>-win64.zip`. Install VLC separately on the target machine.
 The optional `--mpv C:/tools/mpv` flag still bundles an mpv folder as `mpv\`, or accepts
 a single `mpv.exe`, for users selecting `player = "mpv"`. Both bundle flags are optional.
+
+The logo lives in [assets/](assets/):
+
+| File | What it is |
+|---|---|
+| `cue-icon.svg`, `cue-icon.png` | The app icon (512 px PNG) |
+| `cue-mark.svg` | The mark alone, on a transparent background |
+| `cue-wordmark-dark.svg`, `cue-wordmark-light.svg` | The "Cue" wordmark, for dark and light backgrounds |
+| `cue.ico` | The icon at 16–256 px, built into `cue.exe` |
+
+`cue.ico` is rendered from `cue-icon.svg`. Re-render it at those sizes if the icon changes.
 
 `cue.exe --smoke-test` starts the TUI headless, renders the Home screen and exits. Run it
 on a clean machine to check a build.

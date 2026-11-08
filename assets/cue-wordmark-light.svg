@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="56 56 908 400">
+  <title>Cue</title>
+  <path d="M370.9 159.6 A150 150 0 1 0 370.9 352.4" fill="none" stroke="#f29100" stroke-width="52" stroke-linecap="round"/>
+  <path d="M224 182 L224 330 L342 256 Z" fill="#f29100" stroke="#f29100" stroke-width="26" stroke-linejoin="round"/>
+  <g fill="none" stroke="#1d1f24" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M498 238 V322 A84 84 0 0 0 666 322 V238 M666 322 V406"/>
+    <path d="M750 322 H918 A84 84 0 1 0 898.3 376"/>
+  </g>
+</svg>
