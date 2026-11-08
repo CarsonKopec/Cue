@@ -1,3 +1,45 @@
+# Unreleased: subtitle sources from plugins
+
+- **Subtitles from more places.** Plugins can now add subtitle sources, as they add
+  providers and players (`subtitles = [...]` in `plugin.toml`, registered with
+  `cue.subtitles.registry`). Two are in the catalog:
+  - **Addic7ed (Gestdown)**: TV subtitles from Addic7ed through Gestdown's API. No
+    account or key needed.
+  - **SubDL**: movie and TV subtitles in many languages. Needs a free API key from your
+    subdl.com profile.
+- **Every source is searched at once**: OpenSubtitles and any from plugins that are
+  set up.
+  - One that fails doesn't stop the others.
+  - When a download fails (a daily limit, say), the next match is tried.
+  - The subtitle picker says which source found each file.
+- **A Subtitles tab** in the Plugins menu (`Esc`, `p`) lists every source with its
+  status. Enter sets one up (an API key, say) and Space turns it on or off.
+- Each source keeps its settings in `[subtitles.<name>]`, the way OpenSubtitles already
+  did with `[subtitles.opensubtitles]`. `enabled = false` turns one off.
+- Now Playing says "searching for subtitles…" rather than naming OpenSubtitles.
+- Cue's version is 0.5.0, which the new plugins require; 0.4.1 refuses them with a
+  message to update.
+
+Validation:
+- 9 new Cue tests:
+  - searching every source in order, one failing, all failing
+  - downloading from the source that found a file, and falling back after a failed
+    download
+  - which sources start (off, a missing key, a plugin that crashes)
+  - a plugin adding and removing its sources, and the manifest's `subtitles` list
+  - `[subtitles.<name>]` settings and editing them
+  - the app searching only what's set up
+  - the Subtitles tab setting a key and turning a source off and on
+- 5 new cue-plugins tests, against stand-ins for both APIs:
+  - Gestdown: ranking, the show looked up once, TV only, Gestdown being busy (423)
+  - SubDL: the query sent, matching the episode, season packs giving up just this
+    episode's file, movies, a refused key, a limit, no results
+- Live: Cue's subtitle service with the Gestdown plugin found six English subtitles for
+  Breaking Bad S1E1 and downloaded the best.
+- **Not verified**: SubDL against the real API, which needs your key. Its documentation
+  is behind a browser check, so the plugin follows the API as Bazarr's SubDL provider
+  uses it.
+
 # Cue 0.4.1: FFmpeg with cue install — 2026-11-08
 
 - **`cue install` gets FFmpeg too**, which Cue needs to play streams in players that

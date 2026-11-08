@@ -1,4 +1,5 @@
-"""Plugins, providers, groups and players: set providers up, group them, pick a player, install plugins."""
+"""Plugins, providers, groups, players and subtitles: set providers up, group them, pick a player,
+choose where subtitles come from, install plugins."""
 
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from textual.widgets import (
 
 from cue.config import (
     remove_group, set_default_group, set_group_title, set_player, set_player_options, set_plugin_disabled,
-    set_provider_enabled, set_provider_groups, set_provider_options,
+    set_provider_enabled, set_provider_groups, set_provider_options, set_subtitle_enabled, set_subtitle_options,
 )
 from cue.groups import ALL, NAME, Group, definitions, provider_groups, slug
 from cue.player.registry import PATH_SETTING, player_origin, players
@@ -26,10 +27,11 @@ from cue.plugins.actions import WARNING, Source, after_install, after_remove, fe
 from cue.providers import BUILT_IN, discover, is_enabled, origin_of
 from cue.providers.base import Setting
 from cue.screens import CueScreen
+from cue.subtitles.registry import is_on, subtitle_backends, subtitle_origin
 from cue.widgets import StatusBar
 
-PROVIDERS, GROUPS, PLAYERS, PLUGINS = "providers-tab", "groups-tab", "players-tab", "plugins-tab"
-TABS = [PROVIDERS, GROUPS, PLAYERS, PLUGINS]
+PROVIDERS, GROUPS, PLAYERS, SUBTITLES, PLUGINS = "providers-tab", "groups-tab", "players-tab", "subtitles-tab", "plugins-tab"
+TABS = [PROVIDERS, GROUPS, PLAYERS, SUBTITLES, PLUGINS]
 
 
 # -- dialogs ------------------------------------------------------------------------
@@ -275,8 +277,9 @@ class GroupDialog(ModalScreen[tuple[str, list[str]] | None]):
 
 
 def _adds(manifest: Manifest) -> str:
-    """What a plugin adds, for the Plugins table: its providers, then its players."""
-    return ", ".join([*manifest.providers, *(f"{name} (player)" for name in manifest.players)])
+    """What a plugin adds, for the Plugins table: its providers, then its players and subtitle sources."""
+    return ", ".join([*manifest.providers, *(f"{name} (player)" for name in manifest.players),
+                      *(f"{name} (subtitles)" for name in manifest.subtitles)])
 
 
 class PluginsScreen(CueScreen):
@@ -294,6 +297,9 @@ class PluginsScreen(CueScreen):
         # Players tab
         Binding("enter", "player_settings", "Settings", priority=True),
         Binding("d", "use_player", "Use this player"),
+        # Subtitles tab
+        Binding("enter", "subtitle_settings", "Settings", priority=True),
+        Binding("space", "toggle_subtitles", "On/off"),
         # Plugins tab
         Binding("enter", "install", "Install", priority=True),
         Binding("space", "toggle_plugin", "On/off"),
@@ -305,6 +311,7 @@ class PluginsScreen(CueScreen):
     PROVIDER_ACTIONS = {"settings", "toggle_provider"}
     GROUP_ACTIONS = {"edit_group", "default_group", "new_group", "remove_group"}
     PLAYER_ACTIONS = {"player_settings", "use_player"}
+    SUBTITLE_ACTIONS = {"subtitle_settings", "toggle_subtitles"}
     PLUGIN_ACTIONS = {"install", "toggle_plugin", "add", "remove", "reload_catalog"}
 
     def __init__(self) -> None:
@@ -312,6 +319,7 @@ class PluginsScreen(CueScreen):
         self._provider_rows: list[str] = []
         self._group_rows: list[Group] = []
         self._player_rows: list[str] = []
+        self._subtitle_rows: list[str] = []
         self._plugin_rows: list[str] = []
         self._catalog_note = ""
 
@@ -327,6 +335,9 @@ class PluginsScreen(CueScreen):
             with TabPane("Players", id=PLAYERS):
                 yield DataTable(id="player-table", cursor_type="row", zebra_stripes=True)
                 yield Static("", id="player-detail", classes="hint")
+            with TabPane("Subtitles", id=SUBTITLES):
+                yield DataTable(id="subtitle-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="subtitle-detail", classes="hint")
             with TabPane("Plugins", id=PLUGINS):
                 yield DataTable(id="plugin-table", cursor_type="row", zebra_stripes=True)
                 yield Static("", id="plugin-detail", classes="hint")
@@ -334,10 +345,11 @@ class PluginsScreen(CueScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sub_title = "Plugins, providers, groups and players"
+        self.sub_title = "Plugins, providers, groups, players and subtitles"
         self.query_one("#provider-table", DataTable).add_columns("Provider", "From", "Groups", "Status")
         self.query_one("#group-table", DataTable).add_columns("Group", "Providers", "Status")
         self.query_one("#player-table", DataTable).add_columns("Player", "From", "Status")
+        self.query_one("#subtitle-table", DataTable).add_columns("Source", "From", "Status")
         self.query_one("#plugin-table", DataTable).add_columns("Plugin", "Version", "Adds", "Status")
         self.refresh_tables()
         self.query_one("#provider-table", DataTable).focus()
@@ -357,14 +369,16 @@ class PluginsScreen(CueScreen):
             return self._tab == GROUPS
         if action in self.PLAYER_ACTIONS:
             return self._tab == PLAYERS
+        if action in self.SUBTITLE_ACTIONS:
+            return self._tab == SUBTITLES
         if action in self.PLUGIN_ACTIONS:
             return self._tab == PLUGINS
         return True
 
     @on(TabbedContent.TabActivated)
     def _tab_changed(self, event: TabbedContent.TabActivated) -> None:
-        table_id = {PROVIDERS: "#provider-table", GROUPS: "#group-table", PLAYERS: "#player-table"}.get(
-            event.pane.id, "#plugin-table")
+        table_id = {PROVIDERS: "#provider-table", GROUPS: "#group-table", PLAYERS: "#player-table",
+                    SUBTITLES: "#subtitle-table"}.get(event.pane.id, "#plugin-table")
         self.query_one(table_id, DataTable).focus()
         self.refresh_bindings()
 
@@ -433,6 +447,25 @@ class PluginsScreen(CueScreen):
             return Text("off", style="dim")
         return Text(f"needs setup: {self.cue.provider_problems.get(name, 'not started')}", style="yellow")
 
+    def _subtitle_status(self, name: str) -> tuple[Text, str]:
+        """The status cell, and the detail line explaining it."""
+        backend = subtitle_backends().get(name)
+        if backend is None:
+            owner = next((p for p in self.cue.plugins.plugins() if name in p.manifest.subtitles), None)
+            if owner is not None and not owner.enabled:
+                return Text("plugin turned off", style="dim"), f"Its plugin, {owner.name}, is turned off."
+            return Text("not installed", style="red"), "Install the plugin that adds it."
+        searched = {source.name for source in self.cue.subtitles.sources} if self.cue.subtitles else set()
+        if name in searched:
+            return Text("ready", style="green"), "Searched with the other ready sources."
+        problem = self.cue.subtitle_problems.get(name, "not started")
+        if problem == "off":
+            return Text("off", style="dim"), "Space turns it on."
+        if problem.startswith("needs"):
+            where = f" Get one at {backend.homepage}" if backend.homepage else ""
+            return Text(problem, style="yellow"), f"Enter to set it up.{where}"
+        return Text(problem, style="red"), "Check its settings (Enter), or update its plugin."
+
     def _plugin_status(self, plugin: InstalledPlugin, update: CatalogEntry | None) -> Text:
         if plugin.error:
             return Text(f"error: {plugin.error}", style="red")
@@ -494,6 +527,20 @@ class PluginsScreen(CueScreen):
         if keep in self._player_rows:
             player_table.move_cursor(row=self._player_rows.index(keep))
 
+        subtitle_table = self.query_one("#subtitle-table", DataTable)
+        keep = self._selected("#subtitle-table", self._subtitle_rows)
+        subtitle_table.clear()
+        hidden = [name for plugin in self.cue.plugins.plugins() for name in plugin.manifest.subtitles
+                  if name not in subtitle_backends()]
+        self._subtitle_rows = [*subtitle_backends(), *sorted(set(hidden))]
+        for name in self._subtitle_rows:
+            backend = subtitle_backends().get(name)
+            label = Text(backend.title if backend else name, style="bold")
+            source = self._source(subtitle_origin(name)) or "not installed"
+            subtitle_table.add_row(label, source, self._subtitle_status(name)[0])
+        if keep in self._subtitle_rows:
+            subtitle_table.move_cursor(row=self._subtitle_rows.index(keep))
+
         plugin_table = self.query_one("#plugin-table", DataTable)
         keep = self._selected("#plugin-table", self._plugin_rows)
         plugin_table.clear()
@@ -550,6 +597,16 @@ class PluginsScreen(CueScreen):
             lines.append(self._player_status(name)[1])
         lines.append("Enter sets where the program is · d plays with this player")
         self.query_one("#player-detail", Static).update("\n".join(line for line in lines if line))
+
+        name = self._selected("#subtitle-table", self._subtitle_rows)
+        lines = []
+        if name is not None:
+            backend = subtitle_backends().get(name)
+            if backend is not None and backend.description:
+                lines.append(backend.description)
+            lines.append(self._subtitle_status(name)[1])
+        lines.append("Enter edits its settings · Space turns it on or off · every ready source is searched")
+        self.query_one("#subtitle-detail", Static).update("\n".join(line for line in lines if line))
 
         name = self._selected("#plugin-table", self._plugin_rows)
         plugin = self.cue.plugins.get(name) if name else None
@@ -741,6 +798,44 @@ class PluginsScreen(CueScreen):
             self.cue.set_status(f"playing in {backend.title}")
             if backend.program(self.cue.config.players.get(backend.name, {})) is None:
                 self.notify(f"{backend.title} isn't found yet. {backend.missing}", severity="warning", timeout=8)
+            self.refresh_tables()
+
+    # -- subtitles ------------------------------------------------------------------
+
+    def action_subtitle_settings(self) -> None:
+        name = self._selected("#subtitle-table", self._subtitle_rows)
+        backend = subtitle_backends().get(name) if name else None
+        if backend is None:
+            self.notify("Install or turn on this subtitle source's plugin first.", severity="warning")
+            return
+        if not backend.settings:
+            self.notify(f"{backend.title} has no settings; Space turns it on or off.")
+            return
+
+        def saved(values: dict[str, Any] | None) -> None:
+            if values is None:
+                return
+            if self.cue.update_config(set_subtitle_options(backend.name, values), set_subtitle_enabled(backend.name, True)):
+                status, detail = self._subtitle_status(backend.name)
+                if status.plain == "ready":
+                    self.notify(f"{backend.title} is ready.")
+                else:
+                    self.notify(detail, title=f"{backend.title}: {status.plain}", severity="warning", timeout=8)
+            self.refresh_tables()
+
+        values = self.cue.config.subtitles.sources.get(backend.name, {})
+        note = f"Sign up or get a key at {backend.homepage}" if backend.homepage else ""
+        self.app.push_screen(ProviderSettingsDialog(backend.title, backend.settings, values, note), saved)
+
+    def action_toggle_subtitles(self) -> None:
+        name = self._selected("#subtitle-table", self._subtitle_rows)
+        backend = subtitle_backends().get(name) if name else None
+        if backend is None:
+            self.notify("Install or turn on this subtitle source's plugin first.", severity="warning")
+            return
+        on = not is_on(self.cue.config.subtitles.sources.get(backend.name, {}))
+        if self.cue.update_config(set_subtitle_enabled(backend.name, on)):
+            self.cue.set_status(f"{backend.title} subtitles {'on' if on else 'off'}")
             self.refresh_tables()
 
     # -- plugins --------------------------------------------------------------------

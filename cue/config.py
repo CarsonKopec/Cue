@@ -67,7 +67,12 @@ def log_path() -> Path:
 class SubtitleConfig:
     languages: list[str] = field(default_factory=lambda: ["en"])
     auto_download: bool = True
-    opensubtitles_api_key: str = ""
+    # Each subtitle source's [subtitles.<name>] table: OpenSubtitles, and any from plugins.
+    sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def opensubtitles_api_key(self) -> str:
+        return str(self.sources.get("opensubtitles", {}).get("api_key") or "")
 
 
 @dataclass
@@ -217,6 +222,10 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
 
     subs = _get(document, "subtitles", dict, {}, "")
     opensubtitles = _get(subs, "opensubtitles", dict, {}, "subtitles.")
+    _get(opensubtitles, "api_key", str, "", "subtitles.opensubtitles.")
+    for name, section in subs.items():
+        if isinstance(section, dict) and not isinstance(section.get("enabled", True), bool):
+            raise ConfigError(f"subtitles.{name}.enabled must be true or false")
     cast = _get(document, "cast", dict, {}, "")
     cast_port = _get(cast, "port", int, CastConfig.port, "cast.")
     if isinstance(cast_port, bool) or not 0 < cast_port < 65536:
@@ -248,7 +257,7 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
         subtitles=SubtitleConfig(
             languages=[lang.lower() for lang in _str_list(subs, "languages", ["en"], "subtitles.")],
             auto_download=_get(subs, "auto_download", bool, True, "subtitles."),
-            opensubtitles_api_key=_get(opensubtitles, "api_key", str, "", "subtitles.opensubtitles."),
+            sources={name: dict(section) for name, section in subs.items() if isinstance(section, dict)},
         ),
         cast=CastConfig(
             enabled=_get(cast, "enabled", bool, False, "cast."),
@@ -344,6 +353,16 @@ def set_provider_options(name: str, values: Mapping[str, Any]) -> Change:
 def set_player_options(name: str, values: Mapping[str, Any]) -> Change:
     """Set keys of ``[players.<name>]``; a value of ``None`` removes the key."""
     return _set_options("players", name, values)
+
+
+def set_subtitle_options(name: str, values: Mapping[str, Any]) -> Change:
+    """Set keys of ``[subtitles.<name>]`` (a subtitle source); a value of ``None`` removes the key."""
+    return _set_options("subtitles", name, values)
+
+
+def set_subtitle_enabled(name: str, enabled: bool) -> Change:
+    """Turn a subtitle source on (dropping ``enabled = false``) or off."""
+    return _set_options("subtitles", name, {"enabled": None if enabled else False})
 
 
 def set_player(name: str) -> Change:

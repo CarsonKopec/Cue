@@ -400,7 +400,7 @@ class PlaybackSession:
         # only when no preferred server subtitle could be loaded.
         try:
             if not found and self.subtitles is not None:
-                self.state.subtitles = "searching OpenSubtitles…"
+                self.state.subtitles = "searching for subtitles…"
                 self._emit()
                 found = await self.subtitles.ensure(
                     self.provider_name, self.show, episode, file_path=self._local_file(stream)

@@ -33,6 +33,7 @@ class Manifest:
     requires: str = "0"  # the oldest Cue version it works with
     providers: tuple[str, ...] = ()
     players: tuple[str, ...] = ()
+    subtitles: tuple[str, ...] = ()  # subtitle sources it adds
 
     @property
     def module(self) -> str:
@@ -69,7 +70,8 @@ def parse_manifest(table: Mapping[str, Any], where: str = MANIFEST) -> Manifest:
     requires = _text(table, "requires", where, "0")
     version_key(requires)
     providers, players = table.get("providers", []), table.get("players", [])
-    for key, names in (("providers", providers), ("players", players)):
+    subtitles = table.get("subtitles", [])
+    for key, names in (("providers", providers), ("players", players), ("subtitles", subtitles)):
         if not isinstance(names, list) or not all(isinstance(item, str) and item for item in names):
             raise PluginError(f"{where}: {key} must be a list of names")
     homepage = _text(table, "homepage", where, "")
@@ -85,6 +87,7 @@ def parse_manifest(table: Mapping[str, Any], where: str = MANIFEST) -> Manifest:
         requires=requires,
         providers=tuple(providers),
         players=tuple(players),
+        subtitles=tuple(subtitles),
     )
 
 

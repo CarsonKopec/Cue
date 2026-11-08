@@ -27,6 +27,7 @@ from pathlib import Path
 from cue import providers
 from cue.origins import loading
 from cue.player.registry import players_registered_by, unregister_players
+from cue.subtitles.registry import subtitles_registered_by, unregister_subtitles
 from cue.plugins.archive import extract
 from cue.plugins.manifest import MANIFEST, Manifest, PluginError, check_compatible, read_manifest
 
@@ -46,6 +47,7 @@ class InstalledPlugin:
     error: str | None = None
     providers: tuple[str, ...] = field(default=())  # what it registered when loaded
     players: tuple[str, ...] = field(default=())
+    subtitles: tuple[str, ...] = field(default=())
 
     @property
     def name(self) -> str:
@@ -99,6 +101,7 @@ class PluginManager:
                                          valid=False, error=str(exc))
             if previous is not None and previous.loaded and previous.manifest == plugin.manifest:
                 plugin.loaded, plugin.providers, plugin.players = True, previous.providers, previous.players
+                plugin.subtitles = previous.subtitles
             found[folder.name] = plugin
         for name, previous in self._plugins.items():  # removed or changed on disk since it was loaded
             current = found.get(name)
@@ -157,6 +160,7 @@ class PluginManager:
         plugin.loaded, plugin.error = True, None
         plugin.providers = tuple(providers.registered_by(_origin(name)))
         plugin.players = tuple(players_registered_by(_origin(name)))
+        plugin.subtitles = tuple(subtitles_registered_by(_origin(name)))
         return plugin
 
     def _forget(self, plugin: InstalledPlugin) -> list[str]:
@@ -167,6 +171,7 @@ class PluginManager:
         if namespace is not None and hasattr(namespace, plugin.manifest.module):
             delattr(namespace, plugin.manifest.module)
         unregister_players(_origin(plugin.name))
+        unregister_subtitles(_origin(plugin.name))
         return providers.unregister(_origin(plugin.name))
 
     def unload(self, name: str) -> list[str]:
@@ -175,7 +180,7 @@ class PluginManager:
         if plugin is None or not plugin.loaded:
             return []
         removed = self._forget(plugin)
-        plugin.loaded, plugin.providers, plugin.players = False, (), ()
+        plugin.loaded, plugin.providers, plugin.players, plugin.subtitles = False, (), (), ()
         return removed
 
     def set_enabled(self, name: str, enabled: bool) -> InstalledPlugin:

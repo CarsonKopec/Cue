@@ -15,7 +15,9 @@ from cue import providers
 from cue.app import CueApp
 from cue.config import load_config
 from cue.plugins.archive import pack
-from cue.screens.plugins import PLAYERS, PLUGINS, AddPluginDialog, ConfirmDialog, PluginsScreen, ProviderSettingsDialog
+from cue.screens.plugins import (
+    PLAYERS, PLUGINS, SUBTITLES, AddPluginDialog, ConfirmDialog, PluginsScreen, ProviderSettingsDialog,
+)
 from cue.store import Store
 
 PLUGIN = '''
@@ -188,3 +190,35 @@ async def test_plugins_menu_reports_an_unavailable_catalog(setup, store: Store, 
         await pilot.pause()
         assert "Catalog unavailable" in str(screen.query_one("#plugin-detail").render())
         await pilot.press("enter")  # nothing selected: no crash
+
+
+async def test_subtitles_tab_sets_up_and_turns_off_sources(setup, store: Store, tmp_path: Path,
+                                                            cue_home: Path) -> None:
+    name, config, _ = setup
+    app = _app(config, store, tmp_path, cue_home)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.open_plugins()
+        await _settle(app, pilot)
+        screen = app.screen
+        screen.query_one(TabbedContent).active = SUBTITLES
+        await pilot.pause()
+        assert screen._subtitle_rows[0] == "opensubtitles" and app.subtitles is None
+        assert screen._subtitle_status("opensubtitles")[0].plain == "needs api key"
+        assert "opensubtitles.com" in str(screen.query_one("#subtitle-detail").render())
+
+        _select(screen, "#subtitle-table", screen._subtitle_rows, "opensubtitles")
+        await pilot.press("enter")
+        dialog = app.screen
+        assert isinstance(dialog, ProviderSettingsDialog)
+        dialog.query_one("#field-api_key", Input).value = "os-key"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert _saved(config)["subtitles"]["opensubtitles"] == {"api_key": "os-key"}
+        assert app.subtitles is not None and [source.name for source in app.subtitles.sources] == ["opensubtitles"]
+        assert screen._subtitle_status("opensubtitles")[0].plain == "ready"
+
+        await pilot.press("space")
+        assert _saved(config)["subtitles"]["opensubtitles"] == {"api_key": "os-key", "enabled": False}
+        assert app.subtitles is None and screen._subtitle_status("opensubtitles")[0].plain == "off"
+        await pilot.press("space")
+        assert "enabled" not in _saved(config)["subtitles"]["opensubtitles"] and app.subtitles is not None

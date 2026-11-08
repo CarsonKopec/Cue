@@ -42,7 +42,7 @@ from cue.selection import select_quality
 from cue.skip import SkipEngine
 from cue.store import HistoryEntry, Store
 from cue.subtitles import SubtitleService
-from cue.subtitles.opensubtitles import OpenSubtitles
+from cue.subtitles.registry import create_sources
 from cue.subtitles.provider import ProviderSubtitles
 from cue.util import safe_filename
 from cue.widgets import StatusBar
@@ -220,12 +220,9 @@ class CueApp(App[None]):
             if not self._choose_group(group):
                 self.status_message = f"group {group!r} has no providers that are set up"
         self.skip = SkipEngine(self.http, self.store)
-        api_key = config.subtitles.opensubtitles_api_key
-        self.subtitles = (
-            SubtitleService(OpenSubtitles(api_key, self.http, subs_dir()), self.store, config.subtitles.languages)
-            if api_key
-            else None
-        )
+        self.subtitles: SubtitleService | None = None
+        self.subtitle_problems: dict[str, str] = {}  # why each subtitle source that isn't searched isn't
+        self._build_subtitles()
         self.provider_subtitles = ProviderSubtitles(self.http, subs_dir() / "provider")
         self._player_factory = player_factory
         self._initial_query = initial_query
@@ -364,7 +361,15 @@ class CueApp(App[None]):
         self.providers = ready
         self._provider_options = {name: provider_options(self.config.providers.get(name, {})) for name in ready}
         self._build_groups()
+        self._build_subtitles()
         self.set_status(self.status_message)
+
+    def _build_subtitles(self) -> None:
+        """The subtitle service over every source that's set up (none: no service)."""
+        hidden = {name for plugin in self.plugins.plugins() if not plugin.enabled for name in plugin.manifest.subtitles}
+        tables = {name: table for name, table in self.config.subtitles.sources.items() if name not in hidden}
+        sources, self.subtitle_problems = create_sources(tables, self.http, subs_dir())
+        self.subtitles = SubtitleService(sources, self.store, self.config.subtitles.languages) if sources else None
 
     # -- routing -----------------------------------------------------------------
 
