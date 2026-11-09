@@ -54,7 +54,7 @@ delete files in use, checks `sys.platform`.
 | `cue/player/` | The `Player` protocol, VLC, mpv, programs Cue starts (`process.py`, `command.py`), the player registry, the playback session, and the local relay (`relay.py`) |
 | `cue/skip/` | MyAnimeList matching and AniSkip |
 | `cue/subtitles/` | Server subtitles, OpenSubtitles, the subtitle source registry (`registry.py`), and the service that searches every source |
-| `cue/cast/` | The cast server, SSDP, HLS rewriting, network adapters, AirPlay and Chromecast |
+| `cue/cast/` | The cast server, SSDP, HLS rewriting, network adapters, DLNA TVs (`renderers.py`), AirPlay and Chromecast |
 | `cue/plugins/` | Plugin manifests, archives, the catalog and the plugin manager |
 | `cue/install.py`, `cue/update.py`, `cue/ffmpeg_setup.py` | Installing, self-updates and getting FFmpeg |
 | `cue/config.py` | Reading `config.toml`, and editing it without losing comments |

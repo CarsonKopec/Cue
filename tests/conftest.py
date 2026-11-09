@@ -26,11 +26,12 @@ def cue_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture(autouse=True)
 def no_real_tvs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests never search the real network for AirPlay or Chromecast TVs."""
+    """Tests never search the real network for DLNA, AirPlay or Chromecast TVs."""
 
     async def nothing(*args: object) -> list:
         return []
 
+    monkeypatch.setattr("cue.cast.devices._renderer_devices", nothing)
     monkeypatch.setattr("cue.cast.devices._airplay_devices", nothing)
     monkeypatch.setattr("cue.cast.devices._chromecast_devices", nothing)
 

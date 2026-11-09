@@ -43,6 +43,21 @@
   - It also leads to the Plugins menu, which the command palette now reaches only
     through Settings.
   - Settings are saved in `config.toml`, keeping your comments.
+- **Casting to smart TVs over DLNA**: Samsung, LG, Sony and most others, through the
+  player built into the TV. Press `t` and choose the TV (marked DLNA). There's nothing to
+  pair or install.
+  - Episodes play one after another, as with Chromecast.
+  - **Resume:** a TV that can't jump within a stream (Samsung's offers only Pause and
+    Stop) gets a stream that the cast server starts at your place.
+  - **Subtitles:** your first language goes along as SRT, the way Samsung and LG take
+    them, shifted to match a resumed episode.
+  - Tested on a Samsung 7 Series: playing, moving an episode from the PC mid-way, and
+    subtitles.
+- **AirPlay pairing works again.** srptools 2.0 broke pyatv's pairing, so every code was
+  refused ("SRPClientSession takes 2 positional arguments"). Cue now requires srptools
+  below 2, and its self-test pairs with a stand-in TV, so a broken build can't ship.
+- Samsung and LG TVs are no longer offered under AirPlay. pyatv 0.18 can't play video on
+  them (they refuse its request with 404), so they're cast to over DLNA instead.
 - `cue plugin install` and `cue plugin list` name the subtitle sources a plugin adds.
 - Cue's version is 0.5.0, which the new plugins require; 0.4.1 refuses them with a
   message to update.

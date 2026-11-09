@@ -622,6 +622,9 @@ def test_webvtt_becomes_srt() -> None:
         "2\n01:02:03,004 --> 01:02:04,000\nkaraoke <b>loud</b>\n"
     )
     assert vtt_to_srt("WEBVTT\n") == ""
+    # Shifted for a video that starts 4 s in: the first cue is over by then, the second moves up.
+    assert vtt_to_srt(vtt, offset=4.0) == "1\n01:01:59,004 --> 01:02:00,000\nkaraoke <b>loud</b>\n"
+    assert vtt_to_srt("WEBVTT\n\n00:01.000 --> 00:05.000\nHi\n", offset=3) == "1\n00:00:00,000 --> 00:00:02,000\nHi\n"
 
 
 # -- the "Another program" player -------------------------------------------------------------

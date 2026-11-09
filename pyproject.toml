@@ -17,6 +17,7 @@ dependencies = [
     "tomlkit>=0.13",
     "cryptography>=42",  # decrypting HLS pieces while downloading
     "pyatv>=0.16",  # casting to AirPlay TVs
+    "srptools>=1,<2",  # pyatv's pairing: 2.0 made an argument pyatv passes keyword-only, so codes fail
     "PyChromecast>=14",  # casting to Chromecast TVs
 ]
 

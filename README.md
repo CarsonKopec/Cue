@@ -34,7 +34,8 @@ Licensed under the GPL-3.0.
 - **Any video player**: VLC (the default), mpv, MPC-HC, ffplay, even Windows' Media
   Player. Cue adds headers, joins streams or downloads the episode first, whatever the
   player can't do itself. [More](https://github.com/CarsonKopec/Cue/wiki/Players)
-- **Casts to a TV**: VLC on an Xbox, AirPlay TVs and Chromecast.
+- **Casts to a TV**: smart TVs over DLNA (Samsung, LG, Sony…), VLC on an Xbox, Chromecast
+  and Apple TV, with resume and subtitles.
   [More](https://github.com/CarsonKopec/Cue/wiki/Casting)
 - **Installs and updates itself**, plugins included, with no administrator rights.
   [More](https://github.com/CarsonKopec/Cue/wiki/Updates)

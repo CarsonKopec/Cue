@@ -92,11 +92,13 @@ def _smoke_test(app: object) -> int:
         result["fuzzy"] = [s.id for s in fuzzy_filter("frieren", [Show("a", "Sousou no Frieren"), Show("b", "Other")])]
         result["tvs"] = _cast_libraries()
         result["aes"] = _aes_works()
+        result["pairing"] = _airplay_pairing_works()
         app.exit()
 
     app.run(headless=True, size=(100, 30), auto_pilot=pilot)
     ok = (result.get("screen") == HomeScreen.__name__ and result.get("fuzzy") == ["a"]
-          and result.get("tvs") == ["airplay", "chromecast"] and result.get("aes") is True)
+          and result.get("tvs") == ["airplay", "chromecast", "renderer"] and result.get("aes") is True
+          and result.get("pairing") is True)
     print(f"cue {__version__} smoke test {'ok' if ok else 'FAILED'}: {result}")
     return 0 if ok else 1
 
@@ -111,6 +113,30 @@ def _cast_libraries() -> list[str]:
     from cue.cast import devices
 
     return devices.supported()
+
+
+def _airplay_pairing_works(code: str = "1234") -> bool:
+    """Pair the way an AirPlay TV that shows a code does: pyatv for Cue, srptools for the TV.
+
+    pyatv's pairing broke with srptools 2.0 ("SRPClientSession.__init__() takes 2
+    positional arguments"), and only typing a TV's code reached it.
+    """
+    import binascii
+    import hashlib
+
+    from pyatv.auth.hap_srp import SRPAuthHandler
+    from srptools import SRPContext, SRPServerSession, constants
+
+    cue = SRPAuthHandler()
+    cue.initialize()
+    cue.step1(code)
+    tv_context = SRPContext("Pair-Setup", code, prime=constants.PRIME_3072, generator=constants.PRIME_3072_GEN,
+                            hash_func=hashlib.sha512)
+    _, verifier, salt = tv_context.get_user_data_triplet()
+    tv = SRPServerSession(tv_context, verifier)
+    public, proof = cue.step2(binascii.unhexlify(tv.public), binascii.unhexlify(salt))
+    tv.process(binascii.hexlify(public).decode(), salt)
+    return bool(tv.verify_proof(binascii.hexlify(proof)))  # the TV accepts the code
 
 
 def _aes_works() -> bool:

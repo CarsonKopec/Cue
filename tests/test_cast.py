@@ -104,6 +104,54 @@ def test_media_playlist_records_segment_starts_and_total():
     assert all(start is None for _, _, start in calls)
 
 
+TRIM_MEDIA = """#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:5
+#EXT-X-DISCONTINUITY-SEQUENCE:2
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="init.mp4"
+#EXT-X-KEY:METHOD=AES-128,URI="key1"
+#EXTINF:10.0,
+seg0.ts
+#EXT-X-DISCONTINUITY
+#EXT-X-KEY:METHOD=AES-128,URI="key2"
+#EXTINF:10.0,
+seg1.ts
+#EXTINF:10.0,
+seg2.ts
+#EXTINF:10.0,
+seg3.ts
+#EXT-X-ENDLIST
+"""
+
+
+def test_media_playlist_can_begin_at_a_resume_point():
+    calls, register = recorder()
+    text, total = hls.rewrite_media(TRIM_MEDIA, "https://cdn.test/v/a.m3u8", register, start=25)
+    assert total == 40.0
+    lines = text.splitlines()
+    # The sequence numbers move on past the two segments and the discontinuity left out.
+    assert lines[:6] == ["#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-TARGETDURATION:10", "#EXT-X-MEDIA-SEQUENCE:7",
+                         "#EXT-X-DISCONTINUITY-SEQUENCE:3", "#EXT-X-PLAYLIST-TYPE:VOD"]
+    # seg2 (20-30 s) holds 25 s, so it comes first, with the init section and the key it needs.
+    assert calls == [
+        ("https://cdn.test/v/init.mp4", "segment", None),
+        ("https://cdn.test/v/key2", "segment", None),
+        ("https://cdn.test/v/seg2.ts", "segment", 20.0),
+        ("https://cdn.test/v/seg3.ts", "segment", 30.0),
+    ]
+    assert lines[6:] == ['#EXT-X-MAP:URI="relay:0"', '#EXT-X-KEY:METHOD=AES-128,URI="relay:1"', "#EXTINF:10.0,",
+                         "relay:2", "#EXTINF:10.0,", "relay:3", "#EXT-X-ENDLIST"]
+
+    calls.clear()  # past the end: the last segment stays, so there's something to play
+    text, _ = hls.rewrite_media(TRIM_MEDIA, "https://cdn.test/v/a.m3u8", register, start=999)
+    assert [call[0].rsplit("/", 1)[-1] for call in calls] == ["init.mp4", "key2", "seg3.ts"]
+    calls.clear()  # no start: every segment, as before
+    hls.rewrite_media(TRIM_MEDIA, "https://cdn.test/v/a.m3u8", register)
+    assert [start for _, _, start in calls if start is not None] == [0.0, 10.0, 20.0, 30.0]
+
+
 def test_wrapped_media_and_subtitle_playlists():
     wrapped = hls.wrap_media("http://pc/r/a", [hls.Rendition("English", "en", "http://pc/s/0.m3u8", True)])
     assert wrapped.splitlines()[-2:] == [f'#EXT-X-STREAM-INF:BANDWIDTH=2000000,SUBTITLES="{hls.SUBTITLE_GROUP}"', "http://pc/r/a"]
@@ -304,6 +352,35 @@ async def test_segment_requests_save_resume_points_and_watched_markers(cast):
     await eventually(lambda: cast.store.watched("fake", "s1") == {1})
     assert cast.store.get_history("fake", "s1").position == 0.0
     assert "Cast: finished Show · episode 1" in cast.statuses
+
+
+async def test_a_tv_that_cant_seek_gets_playlists_beginning_at_the_resume_point(cast):
+    cast.server.publish("fake", FakeProvider({1: [source_stream()]}), SHOW, EPISODES[:1])
+    master = await cast.tv.get("/play/1/0?start=605")
+    media = await cast.tv.get(master.text.splitlines()[-1])
+    segments = [line for line in media.text.splitlines() if line.startswith("http")]
+    assert len(segments) == 40  # 600 s onward of the 1000-second episode
+    await cast.tv.get(segments[0])
+    await cast.tv.get(segments[20])  # the pieces keep their times in the episode: 800 s
+    await eventually(lambda: (cast.store.get_history("fake", "s1") or SimpleNamespace(position=0)).position == 780.0)
+    # Nonsense or no start: the whole episode.
+    for link in ("/play/1/0?start=soon", "/play/1/0"):
+        media = await cast.tv.get((await cast.tv.get(link)).text.splitlines()[-1])
+        assert sum(line.startswith("http") for line in media.text.splitlines()) == 100
+
+
+async def test_samsung_tvs_get_subtitles_as_srt(cast):
+    cast.server.publish("fake", FakeProvider({1: [source_stream()]}), SHOW, EPISODES[:1])
+    asked = await cast.tv.get("/play/1/0?start=605", headers={"getcaptionInfo.sec": "1"})
+    assert asked.headers["CaptionInfo.sec"] == f"{cast.server.base_url}/s/1/0/0.srt?start=605"  # English: the default
+    assert "CaptionInfo.sec" not in (await cast.tv.get("/play/1/0")).headers  # only when asked
+    french = await cast.tv.get("/s/1/0/1.srt")
+    assert french.headers["content-type"].startswith("application/x-subrip")
+    assert french.text == "1\n00:00:01,000 --> 00:00:02,500\nBonjour\n"
+    # Shifted for an episode that starts 1 s in, as a resumed one on a DLNA TV does.
+    assert (await cast.tv.get("/s/1/0/1.srt?start=1")).text == "1\n00:00:00,000 --> 00:00:01,500\nBonjour\n"
+    media = await cast.server.media(1, 0)
+    assert media.subtitle == f"{cast.server.base_url}/s/1/0/0.srt"
 
 
 async def test_local_files_are_served_with_ranges(cast, tmp_path: Path):
@@ -599,10 +676,38 @@ async def test_chromecast_may_read_media_but_not_the_server_pages(cast):
     assert "access-control-allow-origin" not in index.headers
 
 
+def test_airplay_pairing_with_a_code() -> None:
+    """The handshake after typing a TV's code, with the srptools installed (2.0 broke pyatv's)."""
+    from cue.__main__ import _airplay_pairing_works
+
+    assert _airplay_pairing_works("1234")
+
+
+def test_airplay_pairing_refuses_a_wrong_code() -> None:
+    import binascii
+    import hashlib
+
+    from pyatv.auth.hap_srp import SRPAuthHandler
+    from srptools import SRPContext, SRPServerSession, constants
+
+    cue = SRPAuthHandler()
+    cue.initialize()
+    cue.step1("1111")  # typed wrong
+    tv_context = SRPContext("Pair-Setup", "1234", prime=constants.PRIME_3072, generator=constants.PRIME_3072_GEN,
+                            hash_func=hashlib.sha512)
+    _, verifier, salt = tv_context.get_user_data_triplet()
+    tv = SRPServerSession(tv_context, verifier)
+    public, proof = cue.step2(binascii.unhexlify(tv.public), binascii.unhexlify(salt))
+    tv.process(binascii.hexlify(public).decode(), salt)
+    assert not tv.verify_proof(binascii.hexlify(proof))
+
+
 def test_airplay_speakers_are_left_out() -> None:
     from cue.cast.devices import _plays_video
 
     assert _plays_video({"features": "0x5A7FFFF7,0x1E"})  # an Apple TV
+    # A Samsung TV says it plays HLS video (bit 4), but answers pyatv's /play with 404: it's cast to over DLNA.
+    assert not _plays_video({"features": "0x7F8AD0,0x38BCB46"})
     assert not _plays_video({"features": "0x4A7FCA00,0xBC354BD0"})  # a HomePod
     assert _plays_video({}) and _plays_video({"features": "nonsense"})  # unknown: offer it
 

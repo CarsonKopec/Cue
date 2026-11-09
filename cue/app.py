@@ -230,7 +230,7 @@ class CueApp(App[None]):
         self._sessions: set[PlaybackSession] = set()
         self._audio_modes: dict[str, str] = {}
         self.cast_server: CastServer | None = None
-        self._last_tv = ""  # the AirPlay or Chromecast TV cast to last, offered first next time
+        self._last_tv = ""  # the TV cast to last, offered first next time
         self._relay: LocalRelay | None = None  # started the first time a player needs it
         self._relay_lock = threading.Lock()
 
@@ -541,7 +541,7 @@ class CueApp(App[None]):
     def cast(
         self, provider_name: str, show: Show, queue: Sequence[Episode], *, provider: Provider | None = None,
     ) -> None:
-        """Cast a queue: to VLC, which opens it from its Network tab, or to an AirPlay or Chromecast TV.
+        """Cast a queue: to VLC, which opens it from its Network tab, or to a DLNA, AirPlay or Chromecast TV.
 
         ``provider`` keeps a playing session's SUB/DUB binding when it moves to the TV.
         """
@@ -590,7 +590,7 @@ class CueApp(App[None]):
         self, server: CastServer, device: devices.Device, provider_name: str, provider: Provider, show: Show,
         queue: list[Episode],
     ) -> None:
-        """Play a queue on an AirPlay or Chromecast TV, moving on as each episode finishes."""
+        """Play a queue on a DLNA, AirPlay or Chromecast TV, moving on as each episode finishes."""
         generation, index = server.publish_queue(provider_name, provider, show, queue)
         credentials = self.airplay_credentials()
         receiver: devices.Receiver | None = None

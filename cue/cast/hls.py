@@ -99,31 +99,84 @@ def rewrite_master(text: str, base_url: str, register: Register, renditions: Seq
     return "\n".join(output) + "\n"
 
 
-def rewrite_media(text: str, base_url: str, register: Register, *, track_progress: bool = True) -> tuple[str, float]:
-    """Relay a media playlist's segments; returns the playlist and its total duration."""
-    output: list[str] = []
-    elapsed = 0.0
+_CARRIED = ("#EXT-X-KEY:", "#EXT-X-MAP:")  # apply to every segment after them, so they outlive a trim
+_SEQUENCES = ("#EXT-X-MEDIA-SEQUENCE:", "#EXT-X-DISCONTINUITY-SEQUENCE:")
+
+
+def rewrite_media(
+    text: str, base_url: str, register: Register, *, track_progress: bool = True, start: float = 0.0,
+) -> tuple[str, float]:
+    """Relay a media playlist's segments; returns the playlist and its total duration.
+
+    With ``start``, the segments that end before it are left out, so a player that can't
+    seek (a DLNA TV) begins there. Keys and init sections they relied on are kept, the
+    sequence numbers move on, and the segments that stay keep their times in the episode.
+    """
+    header: list[str] = []
+    blocks: list[tuple[list[str], str, float]] = []  # each segment: its tags, address and duration
+    tags: list[str] = []
     duration = 0.0
     for line in text.lstrip("﻿").splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("#"):
-            if stripped.startswith("#EXTINF:"):
-                try:
-                    duration = float(stripped[len("#EXTINF:"):].split(",", 1)[0])
-                except ValueError:
-                    duration = 0.0
-                if not math.isfinite(duration) or duration < 0:
-                    duration = 0.0
-            elif "URI=" in stripped:  # keys, init sections, partial segments
-                stripped = _URI.sub(lambda m: f'URI="{register(urljoin(base_url, m[1]), "segment", None)}"', stripped)
-            output.append(stripped)
+        if not stripped.startswith("#"):
+            blocks.append((tags, stripped, duration))
+            tags, duration = [], 0.0
             continue
-        output.append(register(urljoin(base_url, stripped), "segment", elapsed if track_progress else None))
-        elapsed += duration
-        duration = 0.0
-    return "\n".join(output) + "\n", elapsed
+        if stripped.startswith("#EXTINF:"):
+            try:
+                duration = float(stripped[len("#EXTINF:"):].split(",", 1)[0])
+            except ValueError:
+                duration = 0.0
+            if not math.isfinite(duration) or duration < 0:
+                duration = 0.0
+        (header if _is_header(stripped) else tags).append(stripped)
+    trailer = tags  # #EXT-X-ENDLIST and anything else after the last segment
+
+    output: list[str] = []
+    elapsed = 0.0
+    dropped = discontinuities = 0
+    carried: dict[str, str] = {}
+    for block_tags, address, length in blocks:
+        if start > 0 and elapsed + length <= start and len(blocks) - dropped > 1:
+            dropped += 1
+            discontinuities += sum(tag == "#EXT-X-DISCONTINUITY" for tag in block_tags)
+            carried.update((tag.split(":", 1)[0], tag) for tag in block_tags if tag.startswith(_CARRIED))
+            elapsed += length
+            continue
+        if carried:  # the first segment kept: restore the key and init section it needs
+            have = {tag.split(":", 1)[0] for tag in block_tags if tag.startswith(_CARRIED)}
+            block_tags = [tag for name, tag in carried.items() if name not in have] + block_tags
+            carried = {}
+        output.extend(_relay_tag(tag, base_url, register) for tag in block_tags)
+        output.append(register(urljoin(base_url, address), "segment", elapsed if track_progress else None))
+        elapsed += length
+    lines = [_moved_on(tag, dropped, discontinuities) for tag in header] + output
+    lines += [_relay_tag(tag, base_url, register) for tag in trailer]
+    return "\n".join(lines) + "\n", elapsed
+
+
+def _is_header(tag: str) -> bool:
+    """Tags about the whole playlist, which stay at the top whatever is trimmed."""
+    return tag.startswith(("#EXTM3U", "#EXT-X-VERSION", "#EXT-X-TARGETDURATION", "#EXT-X-PLAYLIST-TYPE",
+                           "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-START", "#EXT-X-ALLOW-CACHE", *_SEQUENCES))
+
+
+def _relay_tag(tag: str, base_url: str, register: Register) -> str:
+    if "URI=" in tag:  # keys, init sections, partial segments
+        return _URI.sub(lambda m: f'URI="{register(urljoin(base_url, m[1]), "segment", None)}"', tag)
+    return tag
+
+
+def _moved_on(tag: str, dropped: int, discontinuities: int) -> str:
+    for name, step in zip(_SEQUENCES, (dropped, discontinuities), strict=True):
+        if step and tag.startswith(name):
+            try:
+                return f"{name}{int(tag[len(name):]) + step}"
+            except ValueError:
+                return tag
+    return tag
 
 
 def single_variant(text: str, height: int | None = None) -> str:

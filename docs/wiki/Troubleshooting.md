@@ -76,8 +76,12 @@ episodes from Addic7ed on request; try again in a minute.
 4. Open `http://<this PC's address>:8770/` in the TV's browser. If Cue's page loads, the
    network works, and `cue.log` lists the TV's requests (lines starting `cast`).
 
-**No AirPlay or Chromecast TVs in the list.** Turn the TV on (not standby), check it's on
-the same network, and press `r` in the list.
+**No TVs in the list.** Turn the TV on (not standby), check it's on the same network, and
+press `r` in the list. Samsung and LG TVs are listed as DLNA, not AirPlay
+([why](Casting#airplay)).
+
+**A DLNA TV plays without subtitles.** Turn subtitles on in the TV's own settings while it
+plays. Cue sends your first language along with every episode that has one.
 
 **An AirPlay TV keeps asking for a code.** Delete its entry in `airplay.json` (or the whole
 file) and pair again.

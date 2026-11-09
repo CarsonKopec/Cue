@@ -1,4 +1,4 @@
-"""Choosing where to cast: VLC browsing Cue's media server, or an AirPlay or Chromecast TV."""
+"""Choosing where to cast: VLC browsing Cue's media server, or a DLNA, AirPlay or Chromecast TV."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ DLNA = "dlna"  # VLC on the TV opens Cue's media server itself
 
 
 class CastPicker(ModalScreen[Device | str | None]):
-    """VLC (DLNA) right away, plus the AirPlay and Chromecast TVs found on the network."""
+    """VLC (DLNA) right away, plus the DLNA, AirPlay and Chromecast TVs found on the network."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -64,9 +64,9 @@ class CastPicker(ModalScreen[Device | str | None]):
                 note += " · asks for a code the first time"
             targets.add_option(Option(Text.assemble((device.name, "bold"), (f" · {note}", "dim")), id=str(number)))
         if searching:
-            targets.add_option(Option(Text("Looking for AirPlay and Chromecast TVs…", "dim"), disabled=True))
+            targets.add_option(Option(Text("Looking for TVs (DLNA, AirPlay, Chromecast)…", "dim"), disabled=True))
         elif not self._found:
-            targets.add_option(Option(Text("No AirPlay or Chromecast TVs found · r looks again", "dim"), disabled=True))
+            targets.add_option(Option(Text("No other TVs found · r looks again", "dim"), disabled=True))
         remembered = next((number for number, device in enumerate(self._found)
                            if device.identifier == self._remembered), None)
         targets.highlighted = remembered + 1 if remembered is not None else 0

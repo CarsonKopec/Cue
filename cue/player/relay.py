@@ -1156,8 +1156,12 @@ _VTT_TIME = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})")
 _KEEP_TAG = re.compile(r"</?[ibu]>", re.IGNORECASE)
 
 
-def vtt_to_srt(text: str) -> str:
-    """WebVTT as SRT: numbered cues with comma times; styling other than <i>, <b> and <u> is dropped."""
+def vtt_to_srt(text: str, offset: float = 0.0) -> str:
+    """WebVTT as SRT: numbered cues with comma times; styling other than <i>, <b> and <u> is dropped.
+
+    ``offset`` seconds are taken off every time, for a video that starts that far in;
+    cues over by then are left out.
+    """
     cues: list[str] = []
     for block in re.split(r"\n[ \t]*\n", text.replace("\r\n", "\n").replace("\r", "\n").strip()):
         lines = block.split("\n")
@@ -1165,20 +1169,27 @@ def vtt_to_srt(text: str) -> str:
         if timing is None:
             continue  # the WEBVTT header, NOTE, STYLE and REGION blocks
         start, _, end = lines[timing].partition("-->")
-        start, end = _srt_time(start), _srt_time(end.split()[0] if end.split() else "")
+        begins, ends = _seconds(start), _seconds(end.split()[0] if end.split() else "")
         body = [_srt_line(line) for line in lines[timing + 1:]]
         body = [line for line in body if line.strip()]
-        if start and end and body:
-            cues.append(f"{len(cues) + 1}\n{start} --> {end}\n" + "\n".join(body))
+        if begins is None or ends is None or not body or ends - offset <= 0:
+            continue
+        cues.append(f"{len(cues) + 1}\n{_srt_clock(begins - offset)} --> {_srt_clock(ends - offset)}\n"
+                    + "\n".join(body))
     return "\n\n".join(cues) + "\n" if cues else ""
 
 
-def _srt_time(value: str) -> str:
+def _seconds(value: str) -> float | None:
     match = _VTT_TIME.fullmatch(value.strip())
     if match is None:
-        return ""
+        return None
     hours, minutes, seconds, millis = match.groups()
-    return f"{int(hours or 0):02d}:{int(minutes):02d}:{int(seconds):02d},{int(millis.ljust(3, '0')):03d}"
+    return int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds) + int(millis.ljust(3, "0")) / 1000
+
+
+def _srt_clock(seconds: float) -> str:
+    millis = max(0, round(seconds * 1000))
+    return f"{millis // 3_600_000:02d}:{millis // 60_000 % 60:02d}:{millis // 1000 % 60:02d},{millis % 1000:03d}"
 
 
 def _srt_line(line: str) -> str:

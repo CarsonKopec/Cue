@@ -1,3 +1,40 @@
+# Casting to a Samsung TV — 2026-11-08 (America/New_York)
+
+**404 tests** passed in Cue. The TV was a Samsung 7 Series (50), UN50TU700DFXZA,
+with AirPlay and a DLNA media renderer (DMR-1.50), cast to from Windows 11 over
+Ethernet.
+
+## AirPlay, with pyatv 0.18.0
+
+- **Found:** not before the fix. The TV advertises AirPlay `features` bit 4 (HLS
+  video) but not bit 0, and Cue listed only bit 0. With bit 4 accepted, it was found,
+  pairing required.
+- **Pairing:** failed with `SRPClientSession.__init__() takes 2 positional arguments
+  but 3 were given`. srptools 2.0.0 made `private` keyword-only. With srptools 1.0.1
+  the code the TV showed paired. A test now runs the whole SRP exchange, with
+  srptools as the TV, and it fails exactly that way under 2.0.0.
+- **Playing:** not possible. After pairing, `POST /play` was answered 404 Not Found,
+  and so were `/rate` (over RTSP and HTTP) and `/playback-info`. pyatv's optional
+  `PUT /setProperty` calls get 501. The TV is no longer listed under AirPlay.
+
+## DLNA, live
+
+- **Found:** the SSDP search found the TV on the right one of three adapters, by name
+  and model. Its AVTransport answered.
+- **Played:** Apple's public HLS test stream went TRANSITIONING → PLAYING, and
+  `GetPositionInfo` counted up (0:01, 0:04, 0:07 of 10:00). Stopping casting in Cue
+  sent `Stop`, and the TV reported STOPPED.
+- **Couldn't seek:** while playing HLS, `GetCurrentTransportActions` offered only
+  `Pause,Stop`. `Seek` (REL_TIME and ABS_TIME) was refused with 701 for 40 s, and the
+  TV ignored `#EXT-X-START` too.
+- **Fetching:** the TV sends HEAD before GET when given an address.
+- **In Cue (checked by you on the TV):**
+  - A HiAnime episode cast with `t` played.
+  - Subtitles showed: the SRT is sent as Samsung's `sec:CaptionInfoEx` and as the
+    `CaptionInfo.sec` header.
+  - An episode moved to the TV mid-way with `t` on Now Playing started there, with
+    subtitles in step, from the trimmed playlist and shifted SRT.
+
 # Plugins, players and self-install validation — 2026-11-07 (America/New_York)
 
 Both suites passed: **305 tests in Cue** and **316 in cue-plugins**. The plugins and

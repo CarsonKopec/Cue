@@ -2,9 +2,10 @@ What you pick in Cue can play on a TV:
 
 | TV | How it plays |
 |---|---|
+| **Smart TVs** over DLNA: Samsung, LG, Sony and most others | Cue tells the TV's built-in player what to play |
 | **VLC** on an Xbox, a phone, a tablet, or any DLNA player | It browses Cue's media server and you pick an episode on the TV |
-| **AirPlay** TVs: Apple TV, and TVs with AirPlay built in (recent Samsung, LG, Sony) | Cue tells the TV what to play |
 | **Chromecast**: Chromecast, Google TV, TVs with Chromecast built in | Cue tells the TV what to play |
+| **AirPlay**: Apple TV | Cue tells the TV what to play (see [AirPlay](#airplay)) |
 
 Either way the video passes through Cue, which adds the headers and subtitles the source
 needs, so **keep Cue running while you watch**.
@@ -44,8 +45,24 @@ In Cue, open a show and press `t`. That casts every episode; type a range first 
 `3-5`) to cast only those. Already watching on the PC? Press `t` on Now Playing: Cue stops
 the PC's player, saves your place, and casts that episode and the ones after it.
 
-Cue lists where it can cast: **VLC on the TV** first, then the AirPlay and Chromecast TVs it
-finds within a few seconds. `r` looks again, and the TV you cast to last is highlighted.
+Cue lists where it can cast: **VLC on the TV** first, then the TVs it finds within a few
+seconds, each marked DLNA, AirPlay or Chromecast. `r` looks again, and the TV you cast to
+last is highlighted.
+
+### Smart TVs (DLNA)
+
+Choose the TV, such as **Samsung 7 Series (50) · DLNA**. It plays the episode, and when an
+episode ends, the next one starts. Stopping on the TV ends the queue. Pause with the TV's
+remote. There's nothing to pair or install: this is the player built into the TV, the
+one phone apps cast to.
+
+- **Resume:** the TV starts where you left off. Some TVs (Samsung's among them) can't jump
+  within a stream, so Cue's cast server starts the stream there instead. Seeking with the
+  remote may not work on those TVs for the same reason.
+- **Subtitles:** your first language is sent along as an SRT file, the way Samsung, LG and
+  most other TVs take subtitles, and shifted to match a resumed episode. If they don't
+  show, turn on subtitles in the TV's own settings while it plays.
+- Speakers (audio-only DLNA devices) aren't listed.
 
 ### VLC (Xbox and DLNA)
 
@@ -58,17 +75,26 @@ Choose VLC on the TV, then on the TV open **VLC → Network → Cue →** the sh
   shows `(resume 12:34)`; seek there with the controller.
 - The five newest casts stay listed.
 
-### AirPlay and Chromecast
+### Chromecast
 
 Choose the TV. It starts the episode where you left off, and when an episode ends, the
 next one starts. Stopping on the TV ends the queue. Pause and seek with the TV's remote.
+Speakers and speaker groups aren't listed.
 
-An AirPlay TV that asks for a code (most TVs other than an Apple TV) shows one the first
-time; type it into Cue. Cue remembers the pairing in `airplay.json`, so you're asked once.
+### AirPlay
 
-- Only devices that play video are listed, not speakers or speaker groups.
-- TVs must be on, not in standby, to be found.
-- AirPlay stops when Cue closes.
+AirPlay works the same way as Chromecast, with one extra step: an AirPlay device that asks
+for a code shows one the first time, and you type it into Cue. Cue remembers the pairing
+in `airplay.json`, so you're asked once. AirPlay stops when Cue closes.
+
+Cue sends AirPlay video with [pyatv](https://github.com/postlund/pyatv), and pyatv 0.18
+(the newest) can't play video on TVs that have AirPlay built in, such as Samsung's and LG's:
+they refuse its request. So those TVs aren't listed under AirPlay. Cast to them over DLNA
+instead, which works on the same TVs. Only devices that say they play video the Apple TV
+way are listed. pyatv's own reports say 0.18 also fails on Apple TVs with tvOS 26 or later.
+Cue hasn't been tested on an Apple TV.
+
+TVs must be on, not in standby, to be found.
 
 ## What Cue keeps track of
 
@@ -84,8 +110,11 @@ watch on the PC. Auto-skip doesn't apply on a TV.
 - **The TV can't connect?** Open `http://<this PC's address>:8770/` in the TV's browser
   (Edge on the Xbox). If Cue's page loads, the network path works. `cue.log` lists each
   request the TV made (lines starting `cast`).
-- **No AirPlay or Chromecast TVs listed?** Turn the TV on, make sure it's on the same
-  network as the PC, and press `r`.
+- **No TV listed?** Turn the TV on, make sure it's on the same network as the PC, and press
+  `r`. A Samsung or LG TV shows up as DLNA, not AirPlay ([why](#airplay)).
+- **A DLNA TV says it can't play it?** Make sure Windows lets Cue use private networks (the
+  TV fetches the episode from Cue), then cast again. `cue.log` shows whether the TV asked
+  for the episode (`cast <TV's address> - "GET /play/…"`).
 - See also [Troubleshooting](Troubleshooting).
 
 ## Privacy

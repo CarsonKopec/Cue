@@ -41,7 +41,8 @@ Cue runs on Windows, Linux and macOS as a single program. It's licensed under th
 - **Plays in VLC** by default, or mpv, or any other video player, including Windows'
   Media Player. Cue does whatever a player can't: it adds headers, joins streams, or
   downloads the episode first. See [Players](Players).
-- **Casts to a TV**: VLC on an Xbox, AirPlay TVs and Chromecast. See [Casting](Casting).
+- **Casts to a TV**: smart TVs over DLNA (Samsung, LG, Sony…), VLC on an Xbox, Chromecast
+  and Apple TV. See [Casting](Casting).
 - **Keeps itself up to date**, plugins included. See [Updates](Updates).
 
 ## How it works
@@ -52,7 +53,8 @@ changing Cue:
 - [How Cue Works](How-Cue-Works): the big picture, from a search to the player.
 - [Playback and the Local Relay](Playback-and-the-Local-Relay): how Cue gets any stream
   into any player, and how its downloads stay fast and small.
-- [How Casting Works](How-Casting-Works): the DLNA media server, AirPlay and Chromecast.
+- [How Casting Works](How-Casting-Works): the DLNA media server, and telling DLNA,
+  Chromecast and AirPlay TVs what to play.
 - [How Plugins and Updates Work](How-Plugins-and-Updates-Work): installing, checking and
   swapping code safely.
 

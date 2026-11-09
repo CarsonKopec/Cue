@@ -38,6 +38,7 @@ from cue.cast import hls
 from cue.cast.devices import Media
 from cue.cast.network import lan_address
 from cue.cast.ssdp import Advertiser
+from cue.player.relay import vtt_to_srt
 from cue.player.session import RESUME_MIN, WATCHED_AT, PlaybackSession
 from cue.providers.base import Episode, Provider, ProviderError, Show, Stream, is_local_file
 from cue.selection import select_quality
@@ -110,6 +111,13 @@ class _Target:
     start: float | None
     stream_url: str
     headers: tuple[tuple[str, str], ...]
+    trim: float = 0.0  # seconds of the episode its playlists leave out: where a TV that can't seek resumes
+
+
+def _start(query: str) -> float:
+    """``start=`` seconds from an episode link's query; 0 when missing or nonsense."""
+    match = re.search(r"(?:^|&)start=(\d+(?:\.\d+)?)(?:&|$)", query)
+    return min(float(match[1]), 24 * 3600.0) if match else 0.0
 
 
 def _origin(url: str) -> tuple[str, str, int]:
@@ -233,7 +241,16 @@ class CastServer:
             raise ProviderError("This cast was replaced")
         url = self.item_url(generation, index)
         content_type = await asyncio.to_thread(self._content_type, url)
-        return Media(url, cast.label(index), content_type, cast.resume.get(index, 0.0))
+        return Media(url, cast.label(index), content_type, cast.resume.get(index, 0.0),
+                     self.subtitle_url(generation, index))
+
+    def subtitle_url(self, generation: int, index: int) -> str:
+        """The episode's preferred subtitle as SRT, once the episode is resolved; "" when it has none."""
+        resolved = self._resolved.get((generation, index))
+        if resolved is None or not resolved.subtitles:
+            return ""
+        number = next((n for n, sub in enumerate(resolved.subtitles) if sub.default), 0)
+        return f"{self.base_url}/s/{generation}/{index}/{number}.srt"
 
     def _content_type(self, url: str) -> str:
         """Open an item as a TV would, which also resolves it; Chromecast needs the type up front."""
@@ -381,9 +398,11 @@ class CastServer:
         with self._lock:
             return self._targets.get(token)
 
-    def register(self, url: str, kind: str, generation: int, index: int, start: float | None, stream: Stream) -> str:
-        digest = hashlib.sha256(f"{generation}|{index}|{kind}|{start}|{url}".encode()).hexdigest()[:32]
-        target = _Target(url, kind, generation, index, start, stream.url, tuple((stream.headers or {}).items()))
+    def register(
+        self, url: str, kind: str, generation: int, index: int, start: float | None, stream: Stream, trim: float = 0.0,
+    ) -> str:
+        digest = hashlib.sha256(f"{generation}|{index}|{kind}|{start}|{trim}|{url}".encode()).hexdigest()[:32]
+        target = _Target(url, kind, generation, index, start, stream.url, tuple((stream.headers or {}).items()), trim)
         with self._lock:
             self._targets[digest] = target
             self._targets.move_to_end(digest)
@@ -423,7 +442,7 @@ class CastServer:
             raise ProviderError("This cast has expired; cast it again from Cue")
 
         def register(url: str, kind: str, start: float | None) -> str:
-            token = self.register(url, kind, target.generation, target.index, start, resolved.stream)
+            token = self.register(url, kind, target.generation, target.index, start, resolved.stream, target.trim)
             return f"http://{host}/r/{token}"
 
         if target.kind == "root":
@@ -437,7 +456,7 @@ class CastServer:
                 return hls.wrap_media(register(base, "playlist", None), renditions)
         if target.kind == "subtitles":
             return hls.rewrite_media(text, base, register, track_progress=False)[0]
-        rewritten, total = hls.rewrite_media(text, base, register)
+        rewritten, total = hls.rewrite_media(text, base, register, start=target.trim)
         resolved.duration = max(resolved.duration, total)
         return rewritten
 
@@ -597,14 +616,14 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/dlna/cms.xml":
                 self._reply(200, _CMS_SCPD, "text/xml; charset=utf-8", head=head)
             elif match := re.fullmatch(r"/play/(\d+)/(\d+)", path):
-                self._play(int(match[1]), int(match[2]), head)
+                self._play(int(match[1]), int(match[2]), head, _start(urlsplit(self.path).query))
             elif match := re.fullmatch(r"/r/([0-9a-f]{32})", path):
                 target = self.cast.target(match[1])
                 if target is None:
                     self._error(404, "This link has expired; cast again from Cue.", head)
                 else:
                     self._relay(target, head)
-            elif match := re.fullmatch(r"/s/(\d+)/(\d+)/(\d+)\.(m3u8|vtt)", path):
+            elif match := re.fullmatch(r"/s/(\d+)/(\d+)/(\d+)\.(m3u8|vtt|srt)", path):
                 self._subtitle(int(match[1]), int(match[2]), int(match[3]), match[4], head)
             else:
                 self._error(404, "Not found", head)
@@ -624,7 +643,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     # -- media -------------------------------------------------------------------------
 
-    def _play(self, generation: int, index: int, head: bool) -> None:
+    def _play(self, generation: int, index: int, head: bool, start: float = 0.0) -> None:
+        """An episode; with ``start`` (``?start=`` seconds), its HLS playlists begin there."""
         cast = self.cast.cast(generation)
         if cast is None or index >= len(cast.queue):
             self._error(404, "This cast was replaced; cast again from Cue.", head)
@@ -638,10 +658,18 @@ class _Handler(BaseHTTPRequestHandler):
         if is_local_file(stream.url):
             self._file(Path(stream.url), head)
             return
-        token = self.cast.register(stream.url, "root", generation, index, None, stream)
-        self._relay(self.cast.target(token), head)
+        token = self.cast.register(stream.url, "root", generation, index, None, stream, start)
+        self._relay(self.cast.target(token), head, self._captions(generation, index, resolved, start))
 
-    def _relay(self, target: _Target | None, head: bool) -> None:
+    def _captions(self, generation: int, index: int, resolved: _Resolved, start: float) -> dict[str, str]:
+        """Samsung TVs ask for an episode's subtitle with ``getcaptionInfo.sec``; it's named in the answer."""
+        if not self.headers.get("getcaptionInfo.sec") or not resolved.subtitles:
+            return {}
+        number = next((n for n, sub in enumerate(resolved.subtitles) if sub.default), 0)
+        url = f"http://{self._host()}/s/{generation}/{index}/{number}.srt" + (f"?start={start:.0f}" if start else "")
+        return {"CaptionInfo.sec": url}
+
+    def _relay(self, target: _Target | None, head: bool, extra: dict[str, str] | None = None) -> None:
         if target is None:
             self._error(404, "This link has expired; cast again from Cue.", head)
             return
@@ -675,18 +703,21 @@ class _Handler(BaseHTTPRequestHandler):
                 except ProviderError as exc:
                     self._error(410, str(exc), head)
                     return
-                self._reply(200, text, PLAYLIST_TYPE, head=head)
+                self._reply(200, text, PLAYLIST_TYPE, head=head, headers=extra)
                 return
             self.cast.progress(target)
-            self._pass_through(response, first, chunks, head, decoded=decoded)
+            self._pass_through(response, first, chunks, head, decoded=decoded, extra=extra)
         finally:
             response.close()
 
-    def _pass_through(self, response: httpx.Response, first: bytes, chunks: Any, head: bool, *, decoded: bool) -> None:
+    def _pass_through(self, response: httpx.Response, first: bytes, chunks: Any, head: bool, *, decoded: bool,
+                      extra: dict[str, str] | None = None) -> None:
         # Decoded bytes no longer match a compressed response's length or encoding.
         exact = not (decoded and "content-encoding" in response.headers)
         self.send_response(response.status_code)
         self.send_header("Content-Type", response.headers.get("content-type", "application/octet-stream"))
+        for name, value in (extra or {}).items():
+            self.send_header(name, value)
         for name in ("content-length", "content-range", "accept-ranges", "content-encoding"):
             if name in response.headers and (exact or name in {"content-range", "accept-ranges"}):
                 self.send_header(name.title(), response.headers[name])
@@ -747,6 +778,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if kind == "vtt":
             self._reply(200, subtitle.vtt, "text/vtt; charset=utf-8", head=head)
+        elif kind == "srt":  # for DLNA TVs; ?start= shifts it to match an episode that begins there
+            srt = vtt_to_srt(subtitle.vtt, _start(urlsplit(self.path).query))
+            self._reply(200, srt, "application/x-subrip; charset=utf-8", head=head)
         else:
             url = f"http://{self._host()}/s/{generation}/{index}/{number}.vtt"
             self._reply(200, hls.subtitle_playlist(url, subtitle.duration), PLAYLIST_TYPE, head=head)
