@@ -1,4 +1,4 @@
-# Unreleased: subtitle sources from plugins
+# Cue 0.5.0: subtitle plugins, casting to smart TVs, a Settings menu and a wiki — 2026-11-08
 
 - **Subtitles from more places.** Plugins can now add subtitle sources, as they add
   providers and players (`subtitles = [...]` in `plugin.toml`, registered with
