@@ -17,6 +17,7 @@ work there.
 
 | Key | What it does |
 |---|---|
+| `s` | Settings: subtitles, and the way to the Plugins menu (after `Esc` if you're in the search box) |
 | `p` | The Plugins menu: providers, groups, players, subtitle sources and plugins (after `Esc` if you're in the search box) |
 
 The Home screen also lists **Continue Watching**: the shows you were part-way through.
@@ -54,6 +55,14 @@ play those episodes in order, or `Esc` then `d` to download them:
 | `Shift+C` | The subtitle picker: every server track and every subtitle source's results |
 | `t` | Send to TV: stop here, save your place, and cast this episode and the rest |
 | `q` | Stop, saving your place |
+
+## Settings
+
+| Key | What it does |
+|---|---|
+| `Enter` | Open the highlighted section |
+| `Ctrl+S` | Save a section's settings |
+| `q` / `Esc` | Back |
 
 ## Plugins menu
 

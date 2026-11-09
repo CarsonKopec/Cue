@@ -46,7 +46,7 @@ delete files in use, checks `sys.platform`.
 |---|---|
 | `cue/__main__.py` | Command-line entry: arguments, logging, the first-run install offer, the smoke test |
 | `cue/app.py` | The Textual app: shared services (providers, groups, players, subtitles, relay, cast server) and screen routing |
-| `cue/screens/` | Home, Results, Episodes, Now Playing, Plugins, and the cast picker |
+| `cue/screens/` | Home, Results, Episodes, Now Playing, Settings, Plugins, and the cast picker |
 | `cue/widgets.py` | Shared widgets: vim-key lists and the status bar |
 | `cue/providers/` | The provider protocol (`base.py`), the registry, Jellyfin, Local, and helpers for web providers (`web.py`) |
 | `cue/groups.py` | Search groups |

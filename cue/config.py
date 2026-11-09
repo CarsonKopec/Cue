@@ -67,6 +67,9 @@ def log_path() -> Path:
 class SubtitleConfig:
     languages: list[str] = field(default_factory=lambda: ["en"])
     auto_download: bool = True
+    # For players that can't show subtitles by themselves (the Default app): draw the first
+    # language onto the downloaded episode's picture; false puts them inside the file instead.
+    burn_in: bool = True
     # Each subtitle source's [subtitles.<name>] table: OpenSubtitles, and any from plugins.
     sources: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -257,6 +260,7 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
         subtitles=SubtitleConfig(
             languages=[lang.lower() for lang in _str_list(subs, "languages", ["en"], "subtitles.")],
             auto_download=_get(subs, "auto_download", bool, True, "subtitles."),
+            burn_in=_get(subs, "burn_in", bool, True, "subtitles."),
             sources={name: dict(section) for name, section in subs.items() if isinstance(section, dict)},
         ),
         cast=CastConfig(
@@ -353,6 +357,20 @@ def set_provider_options(name: str, values: Mapping[str, Any]) -> Change:
 def set_player_options(name: str, values: Mapping[str, Any]) -> Change:
     """Set keys of ``[players.<name>]``; a value of ``None`` removes the key."""
     return _set_options("players", name, values)
+
+
+def set_subtitle_settings(values: Mapping[str, Any]) -> Change:
+    """Set ``[subtitles]`` keys of its own (``languages``, ``auto_download``, ``burn_in``); ``None`` removes one."""
+    def change(document: tomlkit.TOMLDocument) -> None:
+        table, created = _table(document, "subtitles")
+        for key, value in values.items():  # tomlkit keeps them ahead of the sources' tables
+            if value is None:
+                if key in table:
+                    del table[key]
+            else:
+                table[key] = value
+        _end_new_table(table, created)
+    return change
 
 
 def set_subtitle_options(name: str, values: Mapping[str, Any]) -> Change:

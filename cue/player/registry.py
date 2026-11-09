@@ -53,6 +53,11 @@ class PlayerBackend:
     def supported(self) -> bool:
         return not self.platforms or sys.platform in self.platforms
 
+    @property
+    def all_settings(self) -> tuple[Setting, ...]:
+        """Its settings form: the program's path when it has one, then its own."""
+        return ((PATH_SETTING,) if self.has_program else ()) + self.settings
+
     def program(self, options: Mapping[str, Any]) -> str | None:
         """The configured ``path`` if it exists, else whatever ``locate`` finds."""
         configured = str(options.get("path") or "").strip().strip('"')

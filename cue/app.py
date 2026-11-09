@@ -38,6 +38,7 @@ from cue.screens.home import HomeScreen
 from cue.screens.player import NowPlayingScreen
 from cue.screens.plugins import PluginsScreen
 from cue.screens.results import ResultsScreen
+from cue.screens.settings import SettingsScreen
 from cue.selection import select_quality
 from cue.skip import SkipEngine
 from cue.store import HistoryEntry, Store
@@ -386,11 +387,15 @@ class CueApp(App[None]):
         if not isinstance(self.screen, PluginsScreen):
             self.open_plugins()
 
+    def action_open_settings(self) -> None:
+        if not isinstance(self.screen, SettingsScreen):
+            self.push_screen(SettingsScreen())
+
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
+        # One way in: plugins, providers and players are a section of Settings.
         yield SystemCommand(
-            "Plugins, providers and players", "Install plugins, set up providers, choose a player",
-            self.action_open_plugins,
+            "Settings", "Subtitles, plugins, providers and players", self.action_open_settings,
         )
 
     def open_show(self, provider_name: str, show: Show, *, resume: bool = False) -> None:
@@ -468,7 +473,7 @@ class CueApp(App[None]):
                     backend.create(program, options), title=backend.title, headers=backend.headers,
                     hls=bool(options.get("hls", backend.hls)), links=backend.links, relay=self.local_relay,
                     folder=self._playback_folder(), quality=self.config.playback.quality or self.config.quality,
-                    storage=self._storage(),
+                    storage=self._storage(), burn_subtitles=self.config.subtitles.burn_in,
                 )
 
             if not backend.controls:

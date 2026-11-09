@@ -1,10 +1,16 @@
 Cue's settings live in `config.toml`, in Cue's folder (see [Files](#files)). Cue writes a
 starter file the first time it runs.
 
-You rarely need to edit it by hand: the Plugins menu (on the Home screen, `Esc` then `p`)
-changes providers, groups, players and plugins for you, and keeps your comments and
-layout. Anything else is set here. Cue checks the file when it starts and says what's
-wrong if a setting can't be used.
+You rarely need to edit it by hand. On the Home screen (after `Esc` if you're in the
+search box):
+
+- **Settings** (`s`) changes your subtitle languages, whether they load by themselves,
+  and whether they're burned in for the Default app.
+- **The Plugins menu** (`p`) changes providers, groups, players, subtitle sources and
+  plugins.
+
+Both keep your comments and layout. Anything else is set here. Cue checks the file when
+it starts and says what's wrong if a setting can't be used.
 
 ## A complete example
 
@@ -30,6 +36,7 @@ path = "C:/Tools/mpv/mpv.exe"
 [subtitles]
 languages = ["en"]
 auto_download = true
+burn_in = true            # for the Default app: draw them onto the picture
 
 [subtitles.opensubtitles]
 api_key = "..."           # free key from opensubtitles.com/consumers
@@ -110,6 +117,9 @@ hls = true
 |---|---|---|
 | `languages` | `["en"]` | The languages Cue loads, in order of preference. `pt-br` prefers that region; `pt` takes any. |
 | `auto_download` | `true` | Load subtitles by themselves. Off, the subtitle picker (`Shift+C`) still works. |
+| `burn_in` | `true` | For players that can't show subtitles by themselves (the Default app, so Windows' Media Player): draw your first language onto the downloaded episode's picture. `false` puts every language inside the file instead, for the app's subtitles button. See [Players](Players#default-app). |
+
+These three are also under Settings (`s` on the Home screen) → Subtitles.
 
 ### `[subtitles.<name>]`
 

@@ -4,7 +4,8 @@ HiAnime, HydraHD, ffplay, the Default app, Gestdown and SubDL are plugins, kept 
 
 ## The Plugins menu
 
-On the Home screen press `Esc`, then `p` (it's also in the command palette, `Ctrl+P`).
+On the Home screen press `Esc`, then `p`. It's also in Settings (`s`, or "Settings" in the
+command palette, `Ctrl+P`) → **Plugins, providers and players**.
 The menu has five tabs; `←` and `→` switch between them.
 
 | Tab | What it shows | Keys |

@@ -5,7 +5,11 @@ choose others while you watch.
 [subtitles]
 languages = ["en"]        # in order of preference
 auto_download = true      # false: only when you pick them
+burn_in = true            # for the Default app: draw them onto the picture
 ```
+
+Settings (`s` on the Home screen) → **Subtitles** changes these three without editing the
+file.
 
 ## Where they come from
 
@@ -124,9 +128,10 @@ right name ("English"), the name wins.
 - OpenSubtitles files are saved as `subs\<show>\<episode>.<language>.srt`. Gestdown's and
   SubDL's go in `subs\gestdown\` and `subs\subdl\`, a folder for each show.
 - Players that only open files, such as Windows' Media Player through the Default app,
-  get the subtitles as a file beside the downloaded episode (`<episode>.srt`), which they
-  load by themselves. They can't be changed from Cue's picker while it plays
-  ([Players](Players#default-app)).
+  get your first language burned into the picture of the downloaded episode, since
+  Media Player won't turn subtitles on by itself. With `burn_in` off (Settings →
+  Subtitles), they go inside the file for its own subtitles button instead. Cue's picker
+  can't change them while it plays ([Players](Players#default-app)).
 - Subtitles aren't saved next to episodes downloaded with `d`.
 - Missing or unreadable tracks are reported without stopping the video.
 - Cue doesn't make or translate subtitles where a source has none.

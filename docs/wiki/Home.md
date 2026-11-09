@@ -19,7 +19,7 @@ Cue runs on Windows, Linux and macOS as a single program. It's licensed under th
 | Install Cue | [Installing](Installing) |
 | Set up where shows come from | [Providers](Providers) and [Plugins](Plugins) |
 | Learn the keys | [Keys](Keys) |
-| Change a setting | [Configuration](Configuration) |
+| Change a setting | Settings (`s` on the Home screen), or [Configuration](Configuration) |
 | Watch on a TV | [Casting](Casting) |
 | Use a different video player | [Players](Players) |
 | Fix something that isn't working | [Troubleshooting](Troubleshooting) |

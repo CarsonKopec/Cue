@@ -12,7 +12,8 @@ Cue steps in as each player needs:
 * ``save()``: the episode as a temporary MP4, for players that only open files, such
   as Windows' Media Player. Pieces are fetched several at a time into memory and fed
   to FFmpeg, so only the finished file touches the disk; yt-dlp is the fallback. Its
-  subtitles go beside it as ``<episode>.srt``, where those players look for them.
+  subtitles go inside, making it an MKV: Windows' Media Player shows those, but ignores
+  subtitle files beside a video.
 
 The relay listens on 127.0.0.1 only, so nothing outside this PC can use it.
 """
@@ -59,6 +60,17 @@ PARALLEL = 12  # pieces downloaded at once (more gets throttled by some sources)
 WINDOW = 24  # pieces held in memory ahead of FFmpeg
 RETRIES = 3
 SUBTITLE_WAIT = 20.0  # seconds a downloaded episode waits for its subtitles before it opens
+# Subtitles inside a download: (FFmpeg container, subtitle codec, suffix). Windows' Media
+# Player reads them from an MKV but not an MP4; QuickTime can't open an MKV at all.
+_EMBEDDED = ("mp4", "mov_text", ".mp4") if sys.platform == "darwin" else ("matroska", "srt", ".mkv")
+# H.264 encoders for burning subtitles in, tried in order: GPUs (NVIDIA, Intel, AMD, Apple), then the CPU.
+_BURN_ENCODERS: tuple[tuple[str, ...], ...] = (
+    ("-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0", "-pix_fmt", "yuv420p"),
+    ("-c:v", "h264_qsv", "-preset", "medium", "-global_quality", "21", "-pix_fmt", "nv12"),
+    ("-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "20", "-qp_p", "22", "-pix_fmt", "yuv420p"),
+    ("-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p"),
+    ("-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"),
+)
 _URI_ATTRIBUTE = re.compile(r'URI="([^"]*)"')
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 _SUFFIX = re.compile(r"\.[A-Za-z0-9]{1,5}")
@@ -110,6 +122,20 @@ class LocalRelay:
         self._targets: OrderedDict[str, _Target] = OrderedDict()
         self._server: ThreadingHTTPServer | None = None
         self.port = 0
+        self._burn_lock = threading.Lock()
+        self._burner: list[str] | None = None
+        self._burner_checked = False
+
+    def burn_encoder(self) -> list[str] | None:
+        """FFmpeg's arguments for re-encoding video with subtitles drawn on: the first H.264
+        encoder that works on this PC (a GPU's before the CPU's), or None when FFmpeg can't
+        draw subtitles. Checked once. Blocks."""
+        with self._burn_lock:
+            if not self._burner_checked:
+                self._burner = _find_burner(self.ffmpeg) if self.ffmpeg else None
+                self._burner_checked = True
+                log.info("Burning subtitles in with %s", self._burner[1] if self._burner else "nothing (unavailable)")
+            return self._burner
 
     @property
     def base_url(self) -> str:
@@ -216,34 +242,64 @@ class LocalRelay:
 
     # -- FFmpeg and downloads ------------------------------------------------------------------
 
-    def ffmpeg_command(self, shared: Shared, output: str, container: str) -> list[str]:
+    def ffmpeg_command(
+        self, shared: Shared, output: str, container: str, subtitles: Sequence[tuple[str, Path]] = (),
+        burn: Sequence[str] | None = None,
+    ) -> list[str]:
+        """FFmpeg copying the stream's best video and default audio to ``output``.
+
+        ``subtitles`` (UTF-8 SRT files, the first as the default) become tracks named by
+        language. With ``burn`` (from :meth:`burn_encoder`), the video is re-encoded with
+        the first drawn onto it instead; FFmpeg must then run in that file's folder.
+        """
         if self.ffmpeg is None:
             raise PlayerError("FFmpeg isn't installed")
-        return [
-            self.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
-            "-i", shared.single, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-f", container, "-y", output,
-        ]
+        command = [self.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", shared.single]
+        if burn is not None and subtitles:
+            filename = Path(subtitles[0][1]).name
+            return [*command, "-map", "0:v:0", "-map", "0:a:0?", "-vf", f"subtitles={filename}", *burn,
+                    "-c:a", "copy", "-f", container, "-y", output]
+        for _, path in subtitles:
+            command += ["-i", str(path)]
+        command += ["-map", "0:v:0?", "-map", "0:a:0?"]
+        for number in range(1, len(subtitles) + 1):
+            command += ["-map", f"{number}:s:0"]
+        command += ["-c", "copy"]
+        if subtitles:
+            command += ["-c:s", _EMBEDDED[1]]
+            for index, (language, _) in enumerate(subtitles):
+                command += [f"-metadata:s:s:{index}", f"language={language}",
+                            f"-disposition:s:{index}", "default" if index == 0 else "0"]
+        return [*command, "-f", container, "-y", output]
 
     def save(
         self, stream: Stream, name: str, *, progress: Callable[[str], None] | None = None,
         cancelled: threading.Event | None = None, folder: Path | None = None, quality: str = "best",
-        storage: Storage | None = None,
+        storage: Storage | None = None, subtitles: Sequence[tuple[str, Path]] = (),
+        burn: Sequence[str] | None = None,
     ) -> Path:
         """Download ``stream`` to an MP4 (or whatever yt-dlp makes) and return its path. Blocks.
 
         ``quality`` caps the resolution (``"720"``); ``storage`` says how long earlier
-        episodes stay in ``folder`` and how much room they may take.
+        episodes stay in ``folder`` and how much room they may take. With ``subtitles``
+        (``(language, UTF-8 SRT file)``) and FFmpeg, they go inside: an MKV (an MP4 on
+        macOS, for QuickTime). With ``burn`` too (from :meth:`burn_encoder`), the first is
+        drawn onto the picture instead, in an MP4.
         """
         folder = folder or downloads_dir()
         storage = storage or Storage()
         folder.mkdir(parents=True, exist_ok=True)
-        target = folder / f"{safe_filename(name)}.mp4"
-        partial = target.with_name(target.stem + ".part.mp4")
+        subtitles = list(subtitles) if self.ffmpeg is not None else []
+        burn = burn if subtitles else None
+        container, suffix = ("mp4", ".mp4") if burn is not None or not subtitles else (_EMBEDDED[0], _EMBEDDED[2])
+        target = folder / f"{safe_filename(name)}{suffix}"
+        partial = target.with_name(target.stem + ".part" + suffix)
         tidy(folder, storage, spare={target, partial})
         if target.is_file() and target.stat().st_size > 0:
             return target  # still here from a moment ago
         if self.ffmpeg is not None:
-            saved = self._save_with_ffmpeg(stream, target, partial, progress, cancelled, quality)
+            saved = self._save_with_ffmpeg(stream, target, partial, progress, cancelled, quality, subtitles, burn,
+                                           container)
         else:
             from cue.download import find_ytdlp
 
@@ -337,7 +393,23 @@ class LocalRelay:
 
     def _save_with_ffmpeg(
         self, stream: Stream, target: Path, partial: Path, progress: Callable[[str], None] | None,
-        cancelled: threading.Event | None, quality: str,
+        cancelled: threading.Event | None, quality: str, subtitles: Sequence[tuple[str, Path]] = (),
+        burn: Sequence[str] | None = None, container: str = "mp4",
+    ) -> Path:
+        if burn is not None and subtitles:
+            # The subtitles filter takes a file name; a plain one in a folder of its own
+            # needs no escaping, so FFmpeg runs there.
+            with tempfile.TemporaryDirectory(prefix="cue-burn-") as work:
+                drawn = Path(work) / "subtitles.srt"
+                shutil.copyfile(subtitles[0][1], drawn)
+                return self._run_ffmpeg(stream, target, partial, progress, cancelled, quality,
+                                        [(subtitles[0][0], drawn)], burn, container, cwd=work)
+        return self._run_ffmpeg(stream, target, partial, progress, cancelled, quality, subtitles, None, container)
+
+    def _run_ffmpeg(
+        self, stream: Stream, target: Path, partial: Path, progress: Callable[[str], None] | None,
+        cancelled: threading.Event | None, quality: str, subtitles: Sequence[tuple[str, Path]],
+        burn: Sequence[str] | None, container: str, cwd: str | None = None,
     ) -> Path:
         shared = self.share(stream, quality)
         prefetch = self._plan(shared, cancelled)
@@ -354,7 +426,8 @@ class LocalRelay:
                 self._prefetches[shared.stream_id] = prefetch
             prefetch.start()
         process = subprocess.Popen(  # noqa: S603 - FFmpeg reading Cue's own relay
-            self.ffmpeg_command(shared, str(partial), "mp4"), stdin=subprocess.DEVNULL,
+            self.ffmpeg_command(shared, str(partial), container, subtitles, burn), cwd=cwd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=_NO_WINDOW,
         )
         errors: list[bytes] = []
@@ -543,7 +616,7 @@ def tidy(folder: Path, storage: Storage, spare: set[Path] | frozenset[Path] = fr
     files.sort()
     remaining = []
     for modified, size, path in files:
-        stale = path.name.endswith(".part.mp4") or now - modified >= storage.keep_hours * 3600
+        stale = path.name.endswith((".part.mp4", ".part.mkv")) or now - modified >= storage.keep_hours * 3600
         if not (stale and _delete(path)):
             remaining.append((modified, size, path))
     if storage.max_mb > 0:
@@ -849,7 +922,7 @@ class RelayingPlayer:
     def __init__(
         self, player: Player, *, title: str, relay: Callable[[], LocalRelay],
         headers: frozenset[str] | None, hls: bool, links: bool, folder: Path | None = None,
-        quality: str = "best", storage: Storage | None = None,
+        quality: str = "best", storage: Storage | None = None, burn_subtitles: bool = False,
     ) -> None:
         self._player = player
         self._quality = quality
@@ -864,14 +937,18 @@ class RelayingPlayer:
         self._messages: list[Callable[[Any], None]] = []
         self._cancelled = threading.Event()
         self._subtitles: Awaitable[Sequence[tuple[str, str]] | None] | None = None
-        self.sidecars: list[Path] = []  # subtitle files put beside the downloaded episode
+        self._burn = burn_subtitles
+        self.burned = ""  # the language drawn onto the downloaded episode's picture
+        self.embedded: list[str] = []  # languages of the subtitles inside it, otherwise
+        self.sidecars: list[Path] = []  # subtitle files put beside it, without FFmpeg
 
     def give_subtitles(self, files: Awaitable[Sequence[tuple[str, str]] | None]) -> None:
-        """Subtitle files, ``(language, path)`` with the preferred first, to put beside a downloaded episode.
+        """Subtitle files, ``(language, path)`` with the preferred first, for a downloaded episode.
 
-        For players that can't load subtitles while they play: they're written next to the
-        file, under its name, before the player opens it. ``files`` may still be on its way;
-        the episode waits up to :data:`SUBTITLE_WAIT` seconds for it after downloading.
+        For players that can't load subtitles while they play: they go inside the file (an
+        MKV, with the first marked as the default) or, without FFmpeg, beside it under its
+        name. ``files`` may still be on its way; the download waits up to
+        :data:`SUBTITLE_WAIT` seconds for it.
         """
         self._subtitles = files
 
@@ -913,8 +990,7 @@ class RelayingPlayer:
             return
         stream = Stream(url, dict(headers) if headers else None)
         if route == "file":
-            self._file = await self._download(stream, title or "Cue")
-            self.sidecars = await self._place_subtitles(self._file)
+            await self._download_with_subtitles(stream, title or "Cue")
             await self._player.launch(str(self._file), start=None, headers=None, title=title, extra_args=extra_args)
             return
         relay = await asyncio.to_thread(self._relay)
@@ -922,22 +998,33 @@ class RelayingPlayer:
         link = shared.hls if route == "hls" else shared.continuous
         await self._player.launch(link, start=start, headers=None, title=title, extra_args=extra_args)
 
-    async def _download(self, stream: Stream, name: str) -> Path:
-        loop = asyncio.get_running_loop()
+    async def _download_with_subtitles(self, stream: Stream, name: str) -> None:
+        """Download the episode with its subtitles: drawn onto the picture (``burn_subtitles``),
+        inside the file, or (without FFmpeg) beside it.
 
-        def report(text: str) -> None:
-            message = f"Downloading for {self._title}… {text}"
-            for callback in self._messages:
-                loop.call_soon_threadsafe(callback, message)
-
-        report("starting")
+        Windows' Media Player lists subtitles inside an MKV but starts with them off, whatever
+        the file says, and ignores subtitle files beside a video; burning them in always shows them.
+        """
+        files = await self._subtitles_ready()
         relay = await asyncio.to_thread(self._relay)
-        return await asyncio.to_thread(
-            relay.save, stream, name, progress=report, cancelled=self._cancelled, folder=self._folder,
-            quality=self._quality, storage=self._storage,
-        )
+        ffmpeg = getattr(relay, "ffmpeg", None)
+        burn = None
+        if files and ffmpeg and self._burn and hasattr(relay, "burn_encoder"):
+            burn = await asyncio.to_thread(relay.burn_encoder)
+        with tempfile.TemporaryDirectory(prefix="cue-subtitles-") as work:
+            ready = await asyncio.to_thread(place_subtitles, Path(work) / "episode.mkv", files, ffmpeg) if (
+                files and ffmpeg) else []
+            self._file = await self._download(stream, name, ready, burn if ready else None)
+        if ready and burn is not None:
+            self.burned = ready[0][0]
+        elif ready:
+            self.embedded = [language for language, _ in ready]
+        elif files:
+            placed = await asyncio.to_thread(place_subtitles, self._file, files, ffmpeg)
+            self.sidecars = [path for _, path in placed]
 
-    async def _place_subtitles(self, video: Path) -> list[Path]:
+    async def _subtitles_ready(self) -> list[tuple[str, str]]:
+        """The subtitles given for this episode, once found; waits at most :data:`SUBTITLE_WAIT` seconds."""
         if self._subtitles is None:
             return []
         pending = asyncio.ensure_future(self._subtitles)
@@ -947,19 +1034,34 @@ class RelayingPlayer:
         try:
             files = await asyncio.wait_for(asyncio.shield(pending), SUBTITLE_WAIT)
         except TimeoutError:
-            log.info("Subtitles weren't ready in time; opening %s without them", video.name)
+            log.info("Subtitles weren't ready in time; downloading without them")
             return []
         except asyncio.CancelledError:
             if pending.cancelled():  # the search was called off, not this episode
                 return []
             raise
         except Exception as exc:  # subtitles are a bonus; never let them stop the episode
-            log.warning("Subtitles for %s failed: %s", video.name, exc)
+            log.warning("Subtitles failed: %s", exc)
             return []
-        if not files:
-            return []
+        return [(language, str(path)) for language, path in files or []]
+
+    async def _download(
+        self, stream: Stream, name: str, subtitles: Sequence[tuple[str, Path]] = (), burn: Sequence[str] | None = None,
+    ) -> Path:
+        loop = asyncio.get_running_loop()
+        doing = f"Downloading for {self._title}" + (", adding subtitles" if burn is not None else "")
+
+        def report(text: str) -> None:
+            message = f"{doing}… {text}"
+            for callback in self._messages:
+                loop.call_soon_threadsafe(callback, message)
+
+        report("starting")
         relay = await asyncio.to_thread(self._relay)
-        return await asyncio.to_thread(place_subtitles, video, files, getattr(relay, "ffmpeg", None))
+        return await asyncio.to_thread(
+            relay.save, stream, name, progress=report, cancelled=self._cancelled, folder=self._folder,
+            quality=self._quality, storage=self._storage, subtitles=subtitles, burn=burn,
+        )
 
     async def command(self, *args: Any, timeout: float = 5.0) -> Any:
         return await self._player.command(*args, timeout=timeout)
@@ -982,20 +1084,44 @@ class RelayingPlayer:
                 _delete(path)
 
 
-def place_subtitles(video: Path, files: Sequence[tuple[str, str]], ffmpeg: str | None = None) -> list[Path]:
-    """Copy subtitle files beside ``video``, under its name and as SRT; returns those written.
+def _find_burner(ffmpeg: str) -> list[str] | None:
+    """The first of :data:`_BURN_ENCODERS` that encodes here, if FFmpeg has the subtitles filter (libass)."""
+    def runs(*arguments: str) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(  # noqa: S603 - Cue's own FFmpeg
+                [ffmpeg, "-hide_banner", "-nostdin", *arguments], stdin=subprocess.DEVNULL, capture_output=True,
+                text=True, timeout=30, creationflags=_NO_WINDOW, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
 
-    The first is ``<video>.srt``, which Windows' Media Player, VLC and most players load by
-    themselves; the others are ``<video>.<language>.srt``. WebVTT is converted here, other
-    formats (ASS) with FFmpeg when there is one.
+    filters = runs("-filters")
+    if filters is None or not re.search(r"^\s*\S+\s+subtitles\s", filters.stdout, re.MULTILINE):
+        return None
+    for encoder in _BURN_ENCODERS:  # a GPU encoder may be built in but have no GPU to run on
+        result = runs("-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.2", "-frames:v", "5",
+                      *encoder, "-f", "null", "-")
+        if result is not None and result.returncode == 0:
+            return list(encoder)
+    return None
+
+
+def place_subtitles(
+    video: Path, files: Sequence[tuple[str, str | Path]], ffmpeg: str | None = None,
+) -> list[tuple[str, Path]]:
+    """Copy subtitle files beside ``video``, under its name, as UTF-8 SRT; returns ``(language, path)`` written.
+
+    The first is ``<video>.srt``, which VLC and most players load by themselves; the others
+    are ``<video>.<language>.srt``. WebVTT is converted here, other formats (ASS) with FFmpeg
+    when there is one.
     """
-    placed: list[Path] = []
+    placed: list[tuple[str, Path]] = []
     for index, (language, source) in enumerate(files):
         suffix = ".srt" if index == 0 else f".{safe_filename(language)}.srt"
         target = video.with_name(video.stem + suffix)
         try:
             if _write_srt(Path(source), target, ffmpeg):
-                placed.append(target)
+                placed.append((language, target))
             else:
                 log.info("Couldn't turn %s into SRT for %s", source, video.name)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -1005,12 +1131,15 @@ def place_subtitles(video: Path, files: Sequence[tuple[str, str]], ffmpeg: str |
 
 def _write_srt(source: Path, target: Path, ffmpeg: str | None) -> bool:
     extension = source.suffix.lower()
-    if extension == ".srt":
-        shutil.copyfile(source, target)
-        return True
-    if extension in (".vtt", ".webvtt"):
-        text = vtt_to_srt(source.read_text(encoding="utf-8-sig", errors="replace"))
-        if not text:
+    if extension in (".srt", ".vtt", ".webvtt"):
+        data = source.read_bytes()
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = data.decode("cp1252", errors="replace")  # older SRT files are often Windows-1252
+        if extension != ".srt":
+            text = vtt_to_srt(text)
+        if not text.strip():
             return False
         target.write_text(text, encoding="utf-8-sig")  # the BOM tells Windows players it's UTF-8
         return True
@@ -1067,11 +1196,11 @@ def _srt_line(line: str) -> str:
 def route_player(
     player: Player, *, title: str, headers: frozenset[str] | None, hls: bool, links: bool,
     relay: Callable[[], LocalRelay], folder: Path | None = None, quality: str = "best",
-    storage: Storage | None = None,
+    storage: Storage | None = None, burn_subtitles: bool = False,
 ) -> Player:
     """``player`` itself when it can open any link Cue might give it, else a :class:`RelayingPlayer`."""
     if headers is None and hls and links:
         return player
     return RelayingPlayer(player, title=title, relay=relay, headers=headers, hls=hls, links=links,
-                          folder=folder, quality=quality, storage=storage)
+                          folder=folder, quality=quality, storage=storage, burn_subtitles=burn_subtitles)
 

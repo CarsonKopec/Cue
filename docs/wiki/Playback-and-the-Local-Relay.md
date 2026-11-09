@@ -68,12 +68,39 @@ Windows' Media Player can't open a stream's link: Windows would hand it to a web
 So for the Default app, Cue downloads the episode as an MP4 first, showing progress on Now
 Playing, then opens it.
 
-Such a player can't take subtitles once it's playing, so Cue looks for them while the
-episode downloads. Before opening the file, it saves them beside it under the same name:
-`<episode>.srt` for your first language, `<episode>.<language>.srt` for the others. WebVTT
-is converted to SRT by Cue, and ASS by FFmpeg. If the search is still running when the
-download finishes, the episode waits up to 20 seconds for it, then opens without them.
-The subtitle files are deleted along with the episode.
+### Subtitles for these players
+
+Such a player can't take subtitles once it's playing. What Windows' Media Player does
+with subtitles, tested on Windows 11 with Media Player 11.2609:
+
+| Given as | Media Player |
+|---|---|
+| An `.srt` beside the video, with the same name | Ignores it |
+| A track inside an MP4 (`mov_text`) | Doesn't see it: Windows' media platform reads none from an MP4 |
+| A track inside an MKV | Lists it under its subtitles button, but starts with it off, even when the file marks it default or forced, or tags the audio as Japanese |
+| Drawn onto the picture | Shows it |
+
+So Cue does this:
+
+1. It looks for the episode's subtitles first, waiting at most 20 seconds.
+2. It turns each into UTF-8 SRT: WebVTT is converted by Cue, ASS by FFmpeg, and an old
+   Windows-1252 SRT is re-encoded.
+3. With `burn_in` on (the default; Settings → Subtitles → **Burn them into the
+   picture**), FFmpeg draws your first language onto the video with libass as it
+   downloads. That means re-encoding it with the first H.264 encoder that works on this
+   PC: NVIDIA (`h264_nvenc`), Intel (`h264_qsv`), AMD (`h264_amf`), Apple
+   (`h264_videotoolbox`), else the processor (`libx264`). Each is tried once with a
+   tiny test encode, since one can be built into FFmpeg with no matching graphics card
+   to run on. Audio is copied as it is. Reading and drawing the video, not encoding it,
+   sets the speed: about 13 times faster than playback for busy 1080p on a Ryzen 7 7700.
+4. With it off, or when FFmpeg can't draw subtitles (no libass), FFmpeg writes every
+   language into the download as tracks named by language, your first marked as the
+   default. On Windows and Linux that's an MKV; on macOS an MP4 (`mov_text`), since
+   QuickTime can't open an MKV.
+
+Without FFmpeg, yt-dlp downloads an MP4 and the subtitles go beside it instead:
+`<episode>.srt` for your first language and `<episode>.<language>.srt` for the others,
+which VLC and most other players load. Either way they're deleted along with the episode.
 
 The download is built to be quick and to leave little behind on a small disk:
 

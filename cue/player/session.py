@@ -436,8 +436,16 @@ class PlaybackSession:
         found = await task
         if found is None or generation != self._generation or revision != self._subtitle_revision:
             return
+        burned = str(getattr(self._player, "burned", "") or "")
+        embedded = list(getattr(self._player, "embedded", ()))
         placed = len(getattr(self._player, "sidecars", ()))
-        if placed:
+        if burned:
+            self.state.subtitles = f"{burned} · burned into the picture (the player's settings turn this off)"
+            self._emit()
+        elif embedded:
+            self.state.subtitles = f"{', '.join(embedded)} · inside the episode (the player's subtitles button)"
+            self._emit()
+        elif placed:
             languages = ", ".join(language for language, _ in found[:placed])
             self.state.subtitles = f"{languages} · saved beside the episode for the player"
             self._emit()

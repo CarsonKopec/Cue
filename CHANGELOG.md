@@ -18,11 +18,31 @@
   did with `[subtitles.opensubtitles]`. `enabled = false` turns one off.
 - Now Playing says "searching for subtitles…" rather than naming OpenSubtitles.
 - **Subtitles in Windows' Media Player.** The Default app never got subtitles: Cue loads
-  them once a player reports it's playing, and Media Player reports nothing. Now, while
-  a streamed episode downloads for it, Cue finds the subtitles and saves them beside the
-  file as `<episode>.srt` (WebVTT and ASS converted to SRT), where Media Player and most
-  players load them by themselves. Other players Cue can't control now say they can't
-  load subtitles, instead of showing nothing.
+  them once a player reports it's playing, and Media Player reports nothing.
+  - Now Cue finds a streamed episode's subtitles first, then **burns your first language
+    into the picture** as it downloads, so they always show.
+  - Burning re-encodes the video with the graphics card when it can (NVIDIA, Intel, AMD
+    or Apple), else the processor: about two minutes for a 24-minute 1080p episode,
+    while it downloads.
+  - Turn it off in the new Settings menu → Subtitles (`burn_in = false` in
+    `[subtitles]`). Then every language goes inside the file instead, as an MKV (an MP4
+    on macOS, for QuickTime), for the app's own subtitles button.
+  - What didn't work in Media Player 11.2609:
+    - a subtitle file beside the video, which it ignores;
+    - a track inside an MP4, which Windows' media platform doesn't read;
+    - a track inside an MKV, which it lists but always starts switched off, even marked
+      default or forced, or with Japanese-tagged audio.
+  - WebVTT, ASS and old Windows-1252 SRT files are all turned into UTF-8 SRT first.
+  - Without FFmpeg, yt-dlp downloads an MP4 and the subtitles go beside it as
+    `<episode>.srt`.
+  - Other players Cue can't control now say they can't load subtitles, instead of
+    showing nothing.
+- **A Settings menu** (`s` on the Home screen, or "Settings" in the command palette).
+  - Its **Subtitles** section sets your languages, whether subtitles load by
+    themselves, and whether they're burned in for the Default app.
+  - It also leads to the Plugins menu, which the command palette now reaches only
+    through Settings.
+  - Settings are saved in `config.toml`, keeping your comments.
 - `cue plugin install` and `cue plugin list` name the subtitle sources a plugin adds.
 - Cue's version is 0.5.0, which the new plugins require; 0.4.1 refuses them with a
   message to update.

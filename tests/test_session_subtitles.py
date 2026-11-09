@@ -238,6 +238,48 @@ async def test_players_that_only_open_files_get_subtitles_beside_the_episode(tmp
     assert session.state.error is None
 
 
+async def test_burned_in_subtitles_are_reported(tmp_path, store):
+    burned_with = []
+
+    class FakeRelay:
+        ffmpeg = "ffmpeg"
+
+        def burn_encoder(self):
+            return ["-c:v", "libx264"]
+
+        def save(self, stream, name, *, subtitles, burn, **options):
+            burned_with.append(([language for language, _ in subtitles], burn))
+            saved = tmp_path / "Show.mp4"
+            saved.write_bytes(b"video")
+            return saved
+
+    class Opener(Player):
+        async def launch(self, url, **kwargs):
+            pass  # reports nothing back, like the Default app
+
+        async def quit(self, timeout=3.0):
+            self.running = False
+
+    def factory():
+        return RelayingPlayer(Opener(), title="Default app", relay=FakeRelay, headers=frozenset(), hls=True,
+                              links=False, burn_subtitles=True)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, text=VTT))) as client:
+        session = PlaybackSession(
+            provider_name="anime", provider=Provider(), show=Show("s", "Show"), queue=[Episode("s", 1)],
+            store=store, player_factory=factory, provider_subtitles=ProviderSubtitles(client, tmp_path / "subs"),
+            live_subtitles=False,
+        )
+        task = asyncio.create_task(session.run())
+        try:
+            await wait_for(lambda: "burned" in session.state.subtitles)
+        finally:
+            session.stop()
+            await asyncio.wait_for(task, 5)
+    assert burned_with == [(["en"], ["-c:v", "libx264"])]
+    assert session.state.subtitles == "en · burned into the picture (the player's settings turn this off)"
+
+
 async def test_players_that_cant_load_subtitles_say_so(tmp_path, store):
     async with httpx.AsyncClient() as client:
         session, player = session_for(store, ProviderSubtitles(client, tmp_path), Stream("https://media.test/v.m3u8"),

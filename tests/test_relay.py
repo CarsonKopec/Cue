@@ -116,7 +116,7 @@ def test_ffmpeg_joins_streams_and_saves_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     subprocess.run([
-        find_ffmpeg(), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=4:size=160x120:rate=10",
+        find_ffmpeg(), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=4:size=320x240:rate=10",
         "-f", "lavfi", "-i", "sine=duration=4", "-shortest", "-c:v", "libx264", "-g", "10", "-c:a", "aac",
         "-f", "hls", "-hls_time", "1", "-hls_playlist_type", "vod", str(source / "index.m3u8"),
     ], check=True, timeout=60)
@@ -139,8 +139,83 @@ def test_ffmpeg_joins_streams_and_saves_files(tmp_path: Path) -> None:
         # Pieces are fetched in parallel, then joined from local files.
         assert messages and all(message.endswith("%") for message in messages)
         assert list((tmp_path / "out").iterdir()) == [saved]  # no pieces or partial files left
+
+        # With subtitles they go inside (an MKV; an MP4 on macOS), the first as the default.
+        english, french = tmp_path / "en.srt", tmp_path / "fr.srt"
+        english.write_text("1\n00:00:00,500 --> 00:00:03,500\nHello\n", encoding="utf-8-sig")
+        french.write_text("1\n00:00:00,500 --> 00:00:03,500\nBonjour\n", encoding="utf-8-sig")
+        subtitled = relay.save(stream, "Show: Episode 1", folder=tmp_path / "subtitled",
+                               subtitles=[("en", english), ("fr", french)])
+        assert subtitled.name == "Show Episode 1" + (".mp4" if sys.platform == "darwin" else ".mkv")
+        probe = _probe(subtitled)
+        tracks = [line for line in probe.splitlines() if "Subtitle:" in line]
+        assert len(tracks) == 2 and "(en" in tracks[0] and "(default)" in tracks[0]
+        assert "(fr" in tracks[1] and "(default)" not in tracks[1]
+        assert "Video:" in probe and "Audio:" in probe
+
+        # Burned in: an MP4 whose picture has the first subtitle drawn on, and no subtitle tracks.
+        burner = relay.burn_encoder()
+        if burner is None:
+            pytest.skip("this FFmpeg can't draw subtitles (no libass)")
+        burned = relay.save(stream, "Show: Episode 1", folder=tmp_path / "burned",
+                            subtitles=[("en", english), ("fr", french)], burn=burner)
+        assert burned.name == "Show Episode 1.mp4" and "Subtitle:" not in _probe(burned)
+        assert list((tmp_path / "burned").iterdir()) == [burned]
+        plain, drawn = _frame(saved), _frame(burned)
+        rows = len(plain) // 320
+
+        def changed(first: int, last: int) -> int:
+            """Pixels the subtitle could have changed: re-encoding alone moves them only a little."""
+            part = slice(first * 320, last * 320)
+            return sum(1 for a, b in zip(plain[part], drawn[part], strict=True) if abs(a - b) > 64)
+
+        bottom, top = changed(rows * 3 // 4, rows), changed(0, rows // 4)
+        assert bottom > 100 and top * 20 < bottom, (bottom, top)
     finally:
         relay.stop()
+
+
+def _probe(path: Path) -> str:
+    return subprocess.run([find_ffmpeg(), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                          timeout=30).stderr
+
+
+def _frame(path: Path) -> bytes:
+    """The grey picture 2 seconds in."""
+    return subprocess.run([find_ffmpeg(), "-hide_banner", "-loglevel", "error", "-ss", "2", "-i", str(path),
+                           "-frames:v", "1", "-vf", "format=gray", "-f", "rawvideo", "-"],
+                          capture_output=True, check=True, timeout=30).stdout
+
+
+def test_burning_uses_the_first_encoder_that_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    import cue.player.relay as relay_module
+
+    ran: list[list[str]] = []
+
+    def run(command, **options):
+        ran.append(command)
+        if "-filters" in command:
+            return subprocess.CompletedProcess(command, 0, " .. subtitles         V->V       Render text subtitles\n", "")
+        return subprocess.CompletedProcess(command, 0 if "h264_amf" in command else 1, "", "")
+
+    monkeypatch.setattr(relay_module.subprocess, "run", run)
+    relay = LocalRelay(ffmpeg="ffmpeg")
+    burner = relay.burn_encoder()
+    assert burner is not None and burner[:2] == ["-c:v", "h264_amf"]  # NVIDIA's and Intel's had no GPU here
+    assert relay.burn_encoder() is burner and len(ran) == 4  # checked once
+    tried = [command[command.index("-c:v") + 1] for command in ran if "-c:v" in command]
+    assert tried == ["h264_nvenc", "h264_qsv", "h264_amf"]
+
+    monkeypatch.setattr(relay_module.subprocess, "run",
+                        lambda command, **options: subprocess.CompletedProcess(command, 0, " .. scale  V->V\n", ""))
+    assert LocalRelay(ffmpeg="ffmpeg").burn_encoder() is None  # no libass, no burning
+    assert LocalRelay().burn_encoder() is None
+
+    shared = LocalRelay(ffmpeg="ffmpeg").share(Stream("https://site.test/a.m3u8"))
+    command = LocalRelay(ffmpeg="ffmpeg").ffmpeg_command(shared, "out.mp4", "mp4", [("en", Path("w/subtitles.srt"))],
+                                                         burner)
+    assert command[command.index("-vf") + 1] == "subtitles=subtitles.srt" and command.count("-i") == 1
+    assert command[command.index("-c:a") + 1] == "copy" and "h264_amf" in command
 
 
 def test_prefetch_holds_a_small_window_retries_and_stops(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,7 +435,7 @@ async def test_files_only_players_get_a_download(tmp_path: Path) -> None:
     calls = []
 
     class FakeRelay:
-        def save(self, stream, name, *, progress, cancelled, folder, quality, storage):
+        def save(self, stream, name, *, progress, cancelled, folder, quality, storage, subtitles, burn):
             calls.append((stream.url, name, cancelled, quality))
             progress("50%")
             saved.write_bytes(b"video")
@@ -386,8 +461,74 @@ async def test_files_only_players_get_a_download(tmp_path: Path) -> None:
     assert saved.exists()  # kept for replays
 
 
-async def test_files_only_players_get_subtitles_beside_the_download(tmp_path: Path,
-                                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_files_only_players_get_subtitles_inside_the_download(tmp_path: Path) -> None:
+    subtitle = tmp_path / "found.vtt"
+    subtitle.write_text("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n", encoding="utf-8")
+    given: list[list[tuple[str, str]]] = []
+    copies: list[Path] = []
+
+    class FakeRelay:
+        ffmpeg = "ffmpeg"
+
+        def save(self, stream, name, *, subtitles, **options):
+            # What FFmpeg gets: UTF-8 SRT, converted before the download starts.
+            given.append([(language, Path(path).read_text(encoding="utf-8-sig")) for language, path in subtitles])
+            copies.extend(Path(path) for _, path in subtitles)
+            saved = tmp_path / "Show.mkv"
+            saved.write_bytes(b"video")
+            return saved
+
+    recorder = Recorder()
+    player = RelayingPlayer(recorder, title="Default app", relay=FakeRelay, headers=frozenset(), hls=True, links=False)
+    found = asyncio.get_running_loop().create_future()
+    player.give_subtitles(found)
+    asyncio.get_running_loop().call_later(0.05, found.set_result, [("en", str(subtitle))])
+    await player.launch("https://site.test/a.m3u8", title="Show")
+    assert given == [[("en", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")]]
+    assert player.embedded == ["en"] and player.sidecars == []  # inside the file, so nothing beside it
+    assert recorder.launches[0][0] == str(tmp_path / "Show.mkv")
+    assert copies and not any(path.exists() for path in copies)  # the converted copies are gone
+
+
+async def test_files_only_players_burn_subtitles_in_when_asked(tmp_path: Path) -> None:
+    subtitle = tmp_path / "found.srt"
+    subtitle.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+    saves: list[tuple[list[str], list[str] | None]] = []
+
+    def fake_relay(burner):
+        class FakeRelay:
+            ffmpeg = "ffmpeg"
+
+            def burn_encoder(self):
+                return burner
+
+            def save(self, stream, name, *, subtitles, burn, **options):
+                saves.append(([language for language, _ in subtitles], burn))
+                saved = tmp_path / ("Show.mp4" if burn else "Show.mkv")
+                saved.write_bytes(b"video")
+                return saved
+
+        return FakeRelay
+
+    async def play(burner, burn_subtitles=True) -> RelayingPlayer:
+        player = RelayingPlayer(Recorder(), title="Default app", relay=fake_relay(burner), headers=frozenset(),
+                                hls=True, links=False, burn_subtitles=burn_subtitles)
+        done = asyncio.get_running_loop().create_future()
+        done.set_result([("en", str(subtitle)), ("fr", str(subtitle))])
+        player.give_subtitles(done)
+        await player.launch("https://site.test/a.m3u8", title="Show")
+        return player
+
+    burned = await play(["-c:v", "libx264"])
+    assert burned.burned == "en" and burned.embedded == [] and saves[-1] == (["en", "fr"], ["-c:v", "libx264"])
+    unable = await play(None)  # FFmpeg can't draw subtitles: they go inside instead
+    assert unable.burned == "" and unable.embedded == ["en", "fr"] and saves[-1][1] is None
+    off = await play(["-c:v", "libx264"], burn_subtitles=False)
+    assert off.burned == "" and off.embedded == ["en", "fr"] and saves[-1][1] is None
+
+
+async def test_without_ffmpeg_subtitles_go_beside_the_download(tmp_path: Path,
+                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     import cue.player.relay as relay_module
 
     saved = tmp_path / "Show.mp4"
@@ -395,7 +536,7 @@ async def test_files_only_players_get_subtitles_beside_the_download(tmp_path: Pa
     subtitle.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
 
     class FakeRelay:
-        ffmpeg = None
+        ffmpeg = None  # yt-dlp downloads it, as an MP4
 
         def save(self, stream, name, **options):
             saved.write_bytes(b"video")
@@ -438,11 +579,17 @@ def test_subtitles_are_placed_as_srt_under_the_episodes_name(tmp_path: Path) -> 
     ass = tmp_path / "ja.ass"
     ass.write_text("[Script Info]\n", encoding="utf-8")
 
-    placed = place_subtitles(video, [("en", str(srt)), ("fr", str(vtt)), ("ja", str(ass))], ffmpeg=None)
-    assert placed == [tmp_path / "Show - Episode 1.srt", tmp_path / "Show - Episode 1.fr.srt"]  # ASS needs FFmpeg
-    assert placed[0].read_bytes() == srt.read_bytes()
-    assert placed[1].read_bytes().startswith(b"\xef\xbb\xbf")  # UTF-8 that Windows players recognise
-    assert placed[1].read_text(encoding="utf-8-sig") == "1\n00:00:01,000 --> 00:00:02,000\nBonjour\n"
+    old = tmp_path / "de.srt"
+    old.write_bytes("1\n00:00:01,000 --> 00:00:02,000\nGrüße\n".encode("cp1252"))
+
+    placed = place_subtitles(video, [("en", str(srt)), ("fr", str(vtt)), ("ja", str(ass)), ("de", old)], ffmpeg=None)
+    assert [(language, path.name) for language, path in placed] == [  # ASS needs FFmpeg
+        ("en", "Show - Episode 1.srt"), ("fr", "Show - Episode 1.fr.srt"), ("de", "Show - Episode 1.de.srt")]
+    texts = {language: path.read_text(encoding="utf-8-sig") for language, path in placed}
+    assert all(path.read_bytes().startswith(b"\xef\xbb\xbf") for _, path in placed)  # UTF-8 Windows players recognise
+    assert texts == {"en": "1\n00:00:01,000 --> 00:00:02,000\nCafé\n",
+                     "fr": "1\n00:00:01,000 --> 00:00:02,000\nBonjour\n",
+                     "de": "1\n00:00:01,000 --> 00:00:02,000\nGrüße\n"}  # an old Windows-1252 file, made UTF-8
 
 
 @pytest.mark.skipif(find_ffmpeg() is None, reason="needs FFmpeg")
@@ -457,7 +604,7 @@ def test_ffmpeg_turns_other_subtitles_into_srt(tmp_path: Path) -> None:
         "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,Hello there\n",
         encoding="utf-8",
     )
-    [placed] = place_subtitles(video, [("en", str(ass))], ffmpeg=find_ffmpeg())
+    [(_, placed)] = place_subtitles(video, [("en", str(ass))], ffmpeg=find_ffmpeg())
     text = placed.read_text(encoding="utf-8-sig")
     assert placed == tmp_path / "Show.srt" and "00:00:01,000 --> 00:00:02,500" in text and "Hello there" in text
 

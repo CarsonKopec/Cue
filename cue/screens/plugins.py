@@ -21,7 +21,7 @@ from cue.config import (
     set_provider_enabled, set_provider_groups, set_provider_options, set_subtitle_enabled, set_subtitle_options,
 )
 from cue.groups import ALL, NAME, Group, definitions, provider_groups, slug
-from cue.player.registry import PATH_SETTING, player_origin, players
+from cue.player.registry import player_origin, players
 from cue.plugins import CatalogEntry, InstalledPlugin, Manifest, PluginError, fetch_catalog
 from cue.plugins.actions import WARNING, Source, after_install, after_remove, fetch, find_source, updates
 from cue.providers import BUILT_IN, discover, is_enabled, origin_of
@@ -785,8 +785,10 @@ class PluginsScreen(CueScreen):
                 self.refresh_tables()
 
         values = self.cue.config.players.get(backend.name, {})
-        settings = (PATH_SETTING, *backend.settings) if backend.has_program else backend.settings
-        self.app.push_screen(ProviderSettingsDialog(backend.title, settings, values), saved)
+        if not backend.all_settings:
+            self.notify(f"{backend.title} has no settings.")
+            return
+        self.app.push_screen(ProviderSettingsDialog(backend.title, backend.all_settings, values), saved)
 
     def action_use_player(self) -> None:
         name = self._selected("#player-table", self._player_rows)

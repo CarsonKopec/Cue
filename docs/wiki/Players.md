@@ -74,11 +74,26 @@ link (Windows would hand it to a web browser), so Cue downloads a streamed episo
 with progress on the Now Playing screen, then opens the file. Files already on your PC
 open straight away. Press `q` in Cue when you're done.
 
-These apps can't take subtitles from Cue while they play. So while a streamed episode
-downloads, Cue finds its subtitles and saves them beside the file under the same name
-(`<episode>.srt`), where Media Player and most players look for them. Change them, or
-turn them off, with the app's own subtitles button; Cue's subtitle picker can't change
-them in it. Files already on your PC get no subtitles from Cue.
+These apps can't take subtitles from Cue while they play. Media Player ignores subtitle
+files beside a video, and starts with the subtitles inside one switched off, whatever
+the file says. So Cue finds a streamed episode's subtitles first and **burns your first
+language into the picture** as it downloads: they always show, in any app.
+
+| Settings (`s` on Home) → Subtitles → **Burn them into the picture for the Default app** | What happens |
+|---|---|
+| On (the default) | Drawn onto the video. They can't be turned off while watching. |
+| Off | Inside the file (an MKV; an MP4 on macOS), every language, for the app's own subtitles button. Media Player starts with them off. |
+
+Burning re-encodes the video, using the graphics card when it can (NVIDIA, Intel, AMD or
+Apple), otherwise the processor. A 24-minute 1080p episode takes about two minutes on a
+recent PC, while it downloads. Cue's subtitle picker can't change subtitles in these
+apps. Without FFmpeg (downloading with yt-dlp), subtitles are saved beside the file as
+`<episode>.srt`. Files already on your PC get no subtitles from Cue.
+
+```toml
+[subtitles]
+burn_in = false
+```
 
 This needs FFmpeg (or yt-dlp); on Windows `cue install --ffmpeg` gets it. The downloads
 are quick and leave little behind; see the [`[playback]` settings](Configuration#playback).
