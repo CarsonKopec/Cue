@@ -51,6 +51,9 @@ max_mb = 4096
 [cast]
 enabled = true
 
+[web]                     # cue serve
+port = 8771
+
 [plugins]
 disabled = []
 
@@ -159,6 +162,16 @@ Casting to a TV; see [Casting](Casting).
 | `name` | `"Cue"` | How Cue appears in VLC's Network tab. |
 | `interface` | | The network adapter the TV is on, by name (`"Ethernet"`, `"Wi-Fi"`). |
 | `host` | | Or a fixed address of this PC on the TV's network. Set `interface` or `host`, not both. |
+
+## `[web]`
+
+`cue serve`, the web interface; see [Web and Docker](Web-and-Docker#settings).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `port` | `8771` | The web interface's port. |
+| `host` | | The address to listen on; empty listens on every network adapter. |
+| `hosts` | `[]` | Extra names the web interface answers to, besides IP addresses and home network names such as `nas.local`. |
 
 ## `[plugins]`
 

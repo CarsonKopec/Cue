@@ -88,6 +88,17 @@ class CastConfig:
 
 
 @dataclass
+class WebConfig:
+    """``cue serve``: the web interface for phones and browsers."""
+
+    port: int = 8771
+    host: str = ""  # the address to listen on; empty: every network adapter
+    # Names besides IP addresses, single-label names (nas) and .local/.lan/.home.arpa ones
+    # that the web interface answers to, such as "cue.example.com" on your own DNS.
+    hosts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class PluginsConfig:
     catalog: str = DEFAULT_CATALOG  # an https:// address or a local index.json; empty turns it off
     disabled: list[str] = field(default_factory=list)
@@ -124,6 +135,7 @@ class Config:
     players: dict[str, dict[str, Any]] = field(default_factory=dict)  # [players.<name>] options
     subtitles: SubtitleConfig = field(default_factory=SubtitleConfig)
     cast: CastConfig = field(default_factory=CastConfig)
+    web: WebConfig = field(default_factory=WebConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     updates: UpdatesConfig = field(default_factory=UpdatesConfig)
     playback: PlaybackConfig = field(default_factory=PlaybackConfig)
@@ -237,6 +249,10 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
     cast_interface = _get(cast, "interface", str, "", "cast.").strip()
     if cast_host and cast_interface:
         raise ConfigError("set either cast.host or cast.interface, not both")
+    web = _get(document, "web", dict, {}, "")
+    web_port = _get(web, "port", int, WebConfig.port, "web.")
+    if isinstance(web_port, bool) or not 0 < web_port < 65536:
+        raise ConfigError("web.port must be a port number between 1 and 65535")
     plugins = _get(document, "plugins", dict, {}, "")
     updates = _get(document, "updates", dict, {}, "")
     playback = _get(document, "playback", dict, {}, "")
@@ -269,6 +285,11 @@ def parse_config(document: dict[str, Any], path: Path | None = None) -> Config:
             name=_get(cast, "name", str, CastConfig.name, "cast.") or CastConfig.name,
             host=cast_host,
             interface=cast_interface,
+        ),
+        web=WebConfig(
+            port=web_port,
+            host=_get(web, "host", str, "", "web.").strip(),
+            hosts=[name.strip().lower() for name in _str_list(web, "hosts", [], "web.") if name.strip()],
         ),
         plugins=PluginsConfig(
             catalog=_get(plugins, "catalog", str, DEFAULT_CATALOG, "plugins.").strip(),

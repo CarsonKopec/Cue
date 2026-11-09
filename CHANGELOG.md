@@ -1,3 +1,31 @@
+# Unreleased: Cue on a home server, with a web interface
+
+- **`cue serve`** runs Cue without the terminal, with a web interface for phones and
+  browsers on your network. See the wiki's Web and Docker page.
+  - **Search** by group, with each provider's results shown as they arrive.
+  - **Episodes** with watched marks and where you stopped, and **Continue Watching**.
+  - **Watch in the browser** through the cast server's relay: iPhones play the stream
+    themselves, other browsers with hls.js (bundled, never loaded from a CDN).
+    Subtitles, auto-skip of openings and endings, and auto-next work as on a PC, and your
+    place is saved as you watch.
+  - **Cast to a TV** (DLNA, Chromecast, AirPlay, or VLC on an Xbox) from the chosen
+    episode on, with Next and Stop, and an AirPlay TV's pairing code typed on the phone.
+  - Episodes whose provider has no subtitles get them from the subtitle sources
+    (OpenSubtitles, Addic7ed, SubDL), on the phone and on a TV cast from the web.
+  - There's no login yet: it answers only devices on your home network, by addresses and
+    home network names (`[web] hosts` adds others), and it can't change settings or
+    install plugins.
+  - A `[web]` table sets its port (8771), the address it listens on, and extra names.
+- **Docker**: a `Dockerfile` and `docker-compose.yml` run `cue serve` with the host's
+  network, so it can find TVs and TVs can reach it, keeping everything in `./config`.
+  CI builds and starts the image for amd64 and arm64 on every push (nothing is
+  published yet).
+- Under the hood, the services the terminal app used to own (providers, plugins,
+  subtitles, skips, the database, the relays and casting) moved into a core without a
+  user interface, `cue/core.py`, which the terminal app and `cue serve` both run on. The
+  terminal app works as before.
+- `aiohttp` is now listed as a dependency; it was already installed with pyatv.
+
 # Cue 0.5.0: subtitle plugins, casting to smart TVs, a Settings menu and a wiki — 2026-11-08
 
 - **Subtitles from more places.** Plugins can now add subtitle sources, as they add

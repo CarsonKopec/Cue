@@ -19,6 +19,7 @@ dependencies = [
     "pyatv>=0.16",  # casting to AirPlay TVs
     "srptools>=1,<2",  # pyatv's pairing: 2.0 made an argument pyatv passes keyword-only, so codes fail
     "PyChromecast>=14",  # casting to Chromecast TVs
+    "aiohttp>=3.9",  # cue serve's web server; pyatv already needs it
 ]
 
 [project.optional-dependencies]
@@ -40,6 +41,7 @@ include = ["cue*"]
 
 [tool.setuptools.package-data]
 "cue.player" = ["vlc_http/requests/*.json"]
+"cue.web" = ["static/*", "static/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -19,3 +19,6 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+
+  docker:
+    uses: ./.github/workflows/docker.yml

@@ -63,7 +63,7 @@ async def wait_for(predicate):
 
 async def test_shift_c_picker_works_without_api_key_and_displays_audio_mode(tmp_path, store, monkeypatch):
     player = TestPlayer()
-    monkeypatch.setattr("cue.app.create_providers", lambda *args: ({"test": TestProvider()}, {}))
+    monkeypatch.setattr("cue.core.create_providers", lambda *args: ({"test": TestProvider()}, {}))
     app = CueApp(
         Config(subtitles=SubtitleConfig(auto_download=False)), store=store,
         player_factory=lambda: player, dropin_dir=tmp_path,
@@ -96,7 +96,7 @@ async def test_picker_left_open_across_next_episode_cannot_apply_old_track(tmp_p
         players.append(player)
         return player
 
-    monkeypatch.setattr("cue.app.create_providers", lambda *args: ({"test": TestProvider()}, {}))
+    monkeypatch.setattr("cue.core.create_providers", lambda *args: ({"test": TestProvider()}, {}))
     app = CueApp(
         Config(subtitles=SubtitleConfig(auto_download=False)), store=store,
         player_factory=factory, dropin_dir=tmp_path,

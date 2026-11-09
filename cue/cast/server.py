@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -65,6 +65,8 @@ PLAYLIST_TYPE = "application/vnd.apple.mpegurl"
 ITEM_PROTOCOL = "http-get:*:video/mp2t:*"
 _MEDIA_PATH = re.compile(r"/(?:play|r|s)/")  # what TVs play; the rest is the DLNA server's own pages
 _HOST = re.compile(r"[A-Za-z0-9.\-]+(?::\d{1,5})?|\[[0-9A-Fa-f:.]+\](?::\d{1,5})?")
+# (provider name, show, episode, stream) -> [(language, subtitle file)], from the subtitle sources
+FindSubtitles = Callable[[str, Show, Episode, Stream], Awaitable[list[tuple[str, str]]]]
 
 
 @dataclass
@@ -141,6 +143,7 @@ class CastServer:
         on_status: Callable[[str], None] | None = None,
         announce: bool = True,
         transport: httpx.BaseTransport | None = None,
+        find_subtitles: FindSubtitles | None = None,
     ) -> None:
         self.name = name
         self.address = host or lan_address()
@@ -155,6 +158,7 @@ class CastServer:
         self._quality = quality
         self._on_status = on_status
         self._announce = announce
+        self._find_subtitles = find_subtitles  # for episodes whose provider has no subtitles
         self.client = httpx.Client(
             timeout=httpx.Timeout(20.0, read=60.0), follow_redirects=True, max_redirects=5, transport=transport,
         )
@@ -292,6 +296,8 @@ class CastServer:
         if stream is None:
             raise ProviderError("No playable stream for this episode")
         subtitles = await self._load_subtitles(stream)
+        if not subtitles and self._find_subtitles is not None:
+            subtitles = await self._source_subtitles(cast, index, stream)
         self._status(f"Cast: {cast.label(index)} is playing on the TV")
         return _Resolved(stream, subtitles, time.monotonic())
 
@@ -321,13 +327,44 @@ class CastServer:
             task.result() for task in tasks
             if task in done and task.exception() is None and task.result() is not None
         ]
+        self._choose_default(loaded)
+        return loaded
+
+    async def _source_subtitles(self, cast: _Cast, index: int, stream: Stream) -> list[_Subtitle]:
+        """Subtitles from the subtitle sources (OpenSubtitles, plugins), as playback on a PC finds them."""
+        assert self._find_subtitles is not None
+        try:
+            found = await asyncio.wait_for(
+                self._find_subtitles(cast.provider_name, cast.show, cast.queue[index], stream), SUBTITLE_TIMEOUT,
+            )
+        except Exception as exc:  # subtitles are a bonus; the episode plays without them
+            log.info("Cast subtitles for %s unavailable: %s", cast.label(index), exc or type(exc).__name__)
+            return []
+        loaded = []
+        for language, name in found:
+            path = Path(name)
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                log.info("Cast subtitle %s unavailable: %s", path.name, exc)
+                continue
+            try:
+                text = data.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = data.decode("cp1252", errors="replace")  # older SRT files are often Windows-1252
+            vtt = hls.to_webvtt(text, path.suffix.lower())
+            if vtt is not None:
+                loaded.append(_Subtitle(language, language, vtt, hls.webvtt_duration(vtt)))
+        self._choose_default(loaded)
+        return loaded
+
+    def _choose_default(self, loaded: list[_Subtitle]) -> None:
         # The TV shows the preferred language by default; the rest stay in VLC's menu.
         for preference in self._languages:
             match = next((sub for sub in loaded if PlaybackSession._language_matches(sub.language, preference)), None)
             if match is not None:
                 match.default = True
                 break
-        return loaded
 
     def _record(self, generation: int, index: int, start: float) -> None:
         cast = self._casts.get(generation)

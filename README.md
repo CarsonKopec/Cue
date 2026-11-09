@@ -37,6 +37,9 @@ Licensed under the GPL-3.0.
 - **Casts to a TV**: smart TVs over DLNA (Samsung, LG, Sony…), VLC on an Xbox, Chromecast
   and Apple TV, with resume and subtitles.
   [More](https://github.com/CarsonKopec/Cue/wiki/Casting)
+- **Runs on a home server**: `cue serve` adds a web interface for phones (search, watch,
+  cast), and `docker compose up` runs it in Docker.
+  [More](https://github.com/CarsonKopec/Cue/wiki/Web-and-Docker)
 - **Installs and updates itself**, plugins included, with no administrator rights.
   [More](https://github.com/CarsonKopec/Cue/wiki/Updates)
 
@@ -82,6 +85,7 @@ All the keys are on the [Keys](https://github.com/CarsonKopec/Cue/wiki/Keys) pag
 | [Providers](https://github.com/CarsonKopec/Cue/wiki/Providers) | [Playback and the Local Relay](https://github.com/CarsonKopec/Cue/wiki/Playback-and-the-Local-Relay) | [Building and Releasing](https://github.com/CarsonKopec/Cue/wiki/Building-and-Releasing) |
 | [Players](https://github.com/CarsonKopec/Cue/wiki/Players) | [How Casting Works](https://github.com/CarsonKopec/Cue/wiki/How-Casting-Works) | [Development](https://github.com/CarsonKopec/Cue/wiki/Development) |
 | [Casting](https://github.com/CarsonKopec/Cue/wiki/Casting) | [How Plugins and Updates Work](https://github.com/CarsonKopec/Cue/wiki/How-Plugins-and-Updates-Work) | |
+| [Web and Docker](https://github.com/CarsonKopec/Cue/wiki/Web-and-Docker) | | |
 | [Configuration](https://github.com/CarsonKopec/Cue/wiki/Configuration) | | |
 | [Troubleshooting](https://github.com/CarsonKopec/Cue/wiki/Troubleshooting) | | |
 

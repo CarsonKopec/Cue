@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#14161a">
+  <title>Cue</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/hls.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/" aria-label="Cue home"><img src="/static/icon.svg" alt="" width="28" height="28"><span>Cue</span></a>
+    <button type="button" class="target" id="target" aria-haspopup="dialog">
+      <span class="target-icon" aria-hidden="true"></span><span class="target-name">This device</span>
+    </button>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main id="view" class="view" tabindex="-1"><p class="hint">Loading…</p></main>
+  <section id="casting" class="casting" aria-live="polite" hidden></section>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="picker" class="sheet" aria-labelledby="picker-title">
+    <form method="dialog" class="sheet-head">
+      <h2 id="picker-title">Play on</h2>
+      <button class="icon" value="close" aria-label="Close">✕</button>
+    </form>
+    <div id="picker-list" class="list"></div>
+    <div class="sheet-foot">
+      <button type="button" id="rescan" class="secondary">Look again</button>
+    </div>
+  </dialog>
+  <noscript>Cue's web interface needs JavaScript.</noscript>
+</body>
+</html>

@@ -537,8 +537,8 @@ class RecordingServer:
     (CastConfig(enabled=True, interface="Ethernet"), "10.0.0.5"),
 ])
 async def test_cast_server_listens_on_the_chosen_address(monkeypatch, store, tmp_path, cast_config, listens_on):
-    monkeypatch.setattr("cue.app.CastServer", RecordingServer)
-    monkeypatch.setattr("cue.app.adapter_address", lambda name: {"Ethernet": "10.0.0.5"}[name])
+    monkeypatch.setattr("cue.core.CastServer", RecordingServer)
+    monkeypatch.setattr("cue.core.adapter_address", lambda name: {"Ethernet": "10.0.0.5"}[name])
     RecordingServer.started = []
     app = CueApp(Config(cast=cast_config), store=store, dropin_dir=tmp_path / "no-plugins",
                  http=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404))))
@@ -552,7 +552,7 @@ async def test_missing_adapter_turns_casting_off(monkeypatch, store, tmp_path):
     def missing(name):
         raise network.AdapterError(f"No connected network adapter is named {name!r}")
 
-    monkeypatch.setattr("cue.app.adapter_address", missing)
+    monkeypatch.setattr("cue.core.adapter_address", missing)
     app = CueApp(Config(cast=CastConfig(enabled=True, interface="Wi-Fi")), store=store, dropin_dir=tmp_path / "no-plugins",
                  http=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404))))
     async with app.run_test() as pilot:

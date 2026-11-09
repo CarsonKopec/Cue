@@ -33,6 +33,15 @@ Everything runs on one asyncio event loop: searches, provider requests, the play
 connection, skip lookups and database writes. The local relay and the cast server serve
 HTTP on their own threads and hand provider work back to that loop.
 
+The screens only show things. The services they use live in Cue's **core**
+(`cue/core.py`): providers and search groups, plugins, subtitle sources, the skip
+engine, the database, the local relay and the cast server, plus casting to TVs,
+downloads and settings changes. The core has no user interface; it reports back through
+two callbacks, one for notices and one for a status line. `cue serve`
+([Web and Docker](Web-and-Docker)) runs the same core under a web server instead of the
+Textual app: its JSON API is in `cue/web/api.py`, and browsers play through the cast
+server's relay, the same links TVs play.
+
 ## Providers
 
 A provider answers three questions, as described in

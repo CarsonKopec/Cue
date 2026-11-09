@@ -55,6 +55,7 @@ datas.append((
     str(root / "cue" / "player" / "vlc_http" / "requests" / "status.json"),
     "cue/player/vlc_http/requests",
 ))
+datas.append((str(root / "cue" / "web" / "static"), "cue/web/static"))  # cue serve's web app, hls.js included
 
 a = Analysis(
     [str(root / "cue" / "__main__.py")],

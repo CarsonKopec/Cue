@@ -1,0 +1,2 @@
+# Bundled third-party files stay byte for byte as published, so their checksums match.
+cue/web/static/vendor/** -text

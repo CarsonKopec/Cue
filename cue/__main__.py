@@ -11,7 +11,7 @@ from pathlib import Path
 from cue import __version__
 from cue.config import ConfigError, config_path, load_config, log_path
 
-COMMANDS = ("install", "uninstall", "update", "plugin", "plugins")  # see cue.commands
+COMMANDS = ("install", "uninstall", "update", "serve", "plugin", "plugins")  # see cue.commands
 
 
 def _setup_logging() -> None:
@@ -42,7 +42,8 @@ def main(argv: list[str] | None = None) -> int:
         return run(argv)
     parser = argparse.ArgumentParser(
         prog="cue", description="Keyboard-driven terminal media player with automatic intro/outro skipping.",
-        epilog="Other commands: cue install, cue uninstall, cue update, cue plugin (list|catalog|install|update|remove). "
+        epilog="Other commands: cue install, cue uninstall, cue update, cue serve, "
+               "cue plugin (list|catalog|install|update|remove). "
                "To search for one of these words, put -- first: cue -- install",
     )
     parser.add_argument("query", nargs="*", help="search for a show right away")

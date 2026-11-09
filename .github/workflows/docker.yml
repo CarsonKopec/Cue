@@ -1,0 +1,53 @@
+# Builds the Docker image (cue serve) for amd64 and arm64, starts each one and asks it for
+# the web app. Nothing is published: the images stay on the runner.
+# Run by ci.yml on every push and pull request.
+name: Docker
+
+on:
+  workflow_call:
+
+jobs:
+  image:
+    name: Docker ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64 (Raspberry Pi, most NAS boxes) is built and run in an emulator.
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch != 'amd64'
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: cue:${{ matrix.arch }}
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      - name: Start it and open the web app
+        run: |
+          mkdir config && sudo chown 1000:1000 config
+          docker run -d --name cue --platform linux/${{ matrix.arch }} --network host \
+            -v "$PWD/config:/config" cue:${{ matrix.arch }}
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8771/api/info > info.json; then break; fi
+            sleep 2
+          done
+          docker logs cue
+          cat info.json
+          python3 -c "import json; info = json.load(open('info.json')); assert info['cast']['available'], info"
+          curl -fsS http://127.0.0.1:8771/ | grep -q 'vendor/hls.min.js'
+          curl -fsS -o /dev/null http://127.0.0.1:8771/static/vendor/hls.min.js
+          test -f config/config.toml
+          docker exec cue ffmpeg -version | head -n 1
+          docker stop cue

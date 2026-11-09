@@ -1,4 +1,4 @@
-"""Commands besides the TUI: ``cue install``, ``cue uninstall``, ``cue update`` and ``cue plugin …``."""
+"""Commands besides the TUI: ``cue install``, ``cue uninstall``, ``cue update``, ``cue serve`` and ``cue plugin …``."""
 
 from __future__ import annotations
 
@@ -36,6 +36,10 @@ def _parser() -> argparse.ArgumentParser:
     remove.add_argument("-y", "--yes", action="store_true", help="don't ask first")
     refresh = commands.add_parser("update", parents=[common], help="update Cue and its plugins now")
     refresh.add_argument("--check", action="store_true", help="only say what's available")
+    serve = commands.add_parser("serve", parents=[common],
+                                help="run without the terminal app: a web interface for phones and browsers")
+    serve.add_argument("--host", default="", help="address to listen on (default: [web] host, else every adapter)")
+    serve.add_argument("--port", type=int, default=0, help="port for the web interface (default: [web] port, 8771)")
 
     plugin = commands.add_parser("plugin", aliases=["plugins"], help="list, install and remove plugins")
     actions = plugin.add_subparsers(dest="action", required=True)
@@ -62,6 +66,8 @@ def run(argv: list[str]) -> int:
             return _uninstall(args)
         if args.command == "update":
             return asyncio.run(_update(args))
+        if args.command == "serve":
+            return _serve(args)
         return _plugin(args)
     except (ConfigError, InstallError, PluginError, OSError) as exc:
         print(f"cue: {exc}", file=sys.stderr)
@@ -73,6 +79,26 @@ def _confirm(question: str) -> bool:
         return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
     except EOFError:
         return False
+
+
+# -- serve ------------------------------------------------------------------------------------
+
+
+def _serve(args: argparse.Namespace) -> int:
+    import logging
+
+    from cue.__main__ import _setup_logging
+    from cue.web.serve import run
+
+    if args.port and not 0 < args.port < 65536:
+        print("cue: --port must be between 1 and 65535", file=sys.stderr)
+        return 2
+    config = load_config(args.config)
+    _setup_logging()
+    console = logging.StreamHandler()  # docker logs, or the terminal it runs in
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(console)
+    return run(config, host=args.host, port=args.port)
 
 
 # -- install / uninstall -----------------------------------------------------------------

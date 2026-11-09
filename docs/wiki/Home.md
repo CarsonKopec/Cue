@@ -21,6 +21,7 @@ Cue runs on Windows, Linux and macOS as a single program. It's licensed under th
 | Learn the keys | [Keys](Keys) |
 | Change a setting | Settings (`s` on the Home screen), or [Configuration](Configuration) |
 | Watch on a TV | [Casting](Casting) |
+| Use Cue from a phone, or run it on a home server or in Docker | [Web and Docker](Web-and-Docker) |
 | Use a different video player | [Players](Players) |
 | Fix something that isn't working | [Troubleshooting](Troubleshooting) |
 
@@ -43,6 +44,8 @@ Cue runs on Windows, Linux and macOS as a single program. It's licensed under th
   downloads the episode first. See [Players](Players).
 - **Casts to a TV**: smart TVs over DLNA (Samsung, LG, Sony…), VLC on an Xbox, Chromecast
   and Apple TV. See [Casting](Casting).
+- **Runs on a home server**: `cue serve` gives Cue a web interface, so a phone can search,
+  watch and cast, in Docker or anywhere Cue runs. See [Web and Docker](Web-and-Docker).
 - **Keeps itself up to date**, plugins included. See [Updates](Updates).
 
 ## How it works

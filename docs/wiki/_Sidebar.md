@@ -10,6 +10,7 @@
 - [Subtitles](Subtitles)
 - [Skipping](Skipping)
 - [Casting](Casting)
+- [Web and Docker](Web-and-Docker)
 - [Updates](Updates)
 - [Configuration](Configuration)
 - [Troubleshooting](Troubleshooting)

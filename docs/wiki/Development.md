@@ -30,6 +30,8 @@ The tests need no network, VLC or mpv:
   stands in for mpv, speaking its JSON IPC on a real named pipe (or Unix socket).
 - The app's screens are driven with Textual's test pilot.
 - The local relay and cast server run on real local sockets.
+- The web API (`tests/test_web.py`) runs on aiohttp's test client, with a real core and
+  cast server and pretend TVs.
 - Tests never touch the real PATH, registry, Cue folder (`CUE_HOME` points at a temporary
   one) or network: searching for TVs is switched off.
 - FFmpeg tests run when FFmpeg is installed, and are skipped otherwise.
@@ -45,7 +47,9 @@ delete files in use, checks `sys.platform`.
 | Path | What's there |
 |---|---|
 | `cue/__main__.py` | Command-line entry: arguments, logging, the first-run install offer, the smoke test |
-| `cue/app.py` | The Textual app: shared services (providers, groups, players, subtitles, relay, cast server) and screen routing |
+| `cue/core.py` | The core, with no user interface: providers, groups, plugins, subtitles, skips, the database, the relay and cast server, casting to TVs, downloads and settings changes |
+| `cue/app.py` | The Textual app on top of the core: screen routing, players, and what the current screen shows |
+| `cue/web/` | `cue serve`: the JSON API and its guards (`api.py`), the runner (`serve.py`) and the web app (`static/`, with hls.js bundled under `static/vendor/`) |
 | `cue/screens/` | Home, Results, Episodes, Now Playing, Settings, Plugins, and the cast picker |
 | `cue/widgets.py` | Shared widgets: vim-key lists and the status bar |
 | `cue/providers/` | The provider protocol (`base.py`), the registry, Jellyfin, Local, and helpers for web providers (`web.py`) |
@@ -60,12 +64,16 @@ delete files in use, checks `sys.platform`.
 | `cue/config.py` | Reading `config.toml`, and editing it without losing comments |
 | `cue/store.py` | The SQLite database |
 | `build/` | The PyInstaller spec and release script |
+| `Dockerfile`, `docker-compose.yml` | The image for `cue serve`, and how to run it with the host's network |
 | `docs/wiki/` | These pages |
 
 ## Design notes
 
+- **One core, two faces.** `cue/core.py` owns the services; the Textual app and `cue serve`
+  each run one and only show what it does. New features go in the core first, so the web
+  interface can offer them too.
 - **One event loop.** Searches, provider calls, players, skips and the database run on
-  Textual's asyncio loop. The local relay and the cast server serve HTTP on their own
+  Textual's asyncio loop (or `cue serve`'s). The local relay and the cast server serve HTTP on their own
   threads, handing provider, subtitle and database work to the loop.
 - **VLC** is controlled through VLC 3's HTTP interface on `127.0.0.1`, with a fresh random
   password and a separate VLC process for each episode. Cue polls position, length and
@@ -90,6 +98,10 @@ delete files in use, checks `sys.platform`.
   source's file ID or a server track's cache key).
 - **Open question:** subtitle hash matching works only for local files; Jellyfin streams are
   matched by title and episode.
+
+- **Bundled web code.** The web app loads nothing from other sites. hls.js is copied
+  from its npm package into `cue/web/static/vendor/` with its license; that folder's
+  `README.txt` says which version and how to update it.
 
 ## Changing these docs
 

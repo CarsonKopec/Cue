@@ -1,0 +1,22 @@
+# Cue's web interface on a home server:  docker compose up -d --build
+# then open http://<this machine's address>:8771 on a phone or browser on the same network.
+# Settings live in ./config/config.toml (made on first start); restart after changing it.
+services:
+  cue:
+    build: .
+    image: cue:local
+    container_name: cue
+    restart: unless-stopped
+    # The host's network, not Docker's: Cue finds TVs with SSDP and mDNS broadcasts, and
+    # phones and TVs play videos from its cast server (port 8770), so both need the real LAN.
+    # With host networking the ports are the host's own: 8771 (web) and 8770 (cast server).
+    network_mode: host
+    # Cue runs as this user and group; ./config must be theirs. 1000 is the first
+    # user on most Linux systems (`id -u` and `id -g` show yours).
+    user: "${CUE_UID:-1000}:${CUE_GID:-1000}"
+    volumes:
+      - ./config:/config
+      # Local files for the local provider: mount them, then set [providers.local] path = "/media".
+      # - /srv/media:/media:ro
+    environment:
+      TZ: ${TZ:-Etc/UTC}
