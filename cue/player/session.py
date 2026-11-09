@@ -2,7 +2,8 @@
 
 * seeks past AniSkip intervals when the position enters one (auto-skip),
 * writes the position to SQLite every few seconds and on exit, for resume,
-* loads the server's preferred-language subtitles, with optional OpenSubtitles fallback,
+* loads the server's preferred-language subtitles, with the subtitle sources as a fallback
+  (for a player that can't load them while it plays, they go beside the downloaded file),
 * moves to the next episode on ``eof-reached`` when auto-next is on.
 
 Each episode gets its own player process, started at the saved resume position.
@@ -14,7 +15,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from cue.player.base import Player, PlayerError
 from cue.providers.base import Episode, Provider, ProviderError, Show, Stream, is_local_file
@@ -26,6 +27,7 @@ from cue.subtitles.provider import ProviderSubtitles, language_code
 from cue.util import format_time
 
 log = logging.getLogger(__name__)
+T = TypeVar("T")
 
 MANUAL_SKIP = 85.0  # seconds jumped by the `s` key
 SAVE_INTERVAL = 5.0  # seconds of playback between progress writes
@@ -68,6 +70,7 @@ class PlaybackSession:
         quality: str = "best",
         player_args: Sequence[str] = (),
         player_note: str = "",  # shown while playing, for players Cue can't control
+        live_subtitles: bool = True,  # the player loads subtitle files while it plays
     ) -> None:
         self.provider_name = provider_name
         self.provider = provider
@@ -84,6 +87,7 @@ class PlaybackSession:
         self.quality = quality
         self.player_args = list(player_args)
         self.player_note = player_note
+        self.live_subtitles = live_subtitles
         self.state = PlaybackState(show)
         self.listener: Callable[[PlaybackState], None] | None = None
         self._player_factory = player_factory
@@ -155,6 +159,8 @@ class PlaybackSession:
         loaded = self._loaded
         if self._offered_tracks.get(id(track)) != generation:
             raise SubtitleError("Episode changed; open the subtitle picker again")
+        if not self.live_subtitles:
+            raise SubtitleError("This player can't change subtitles while it plays; VLC and mpv can")
         self._subtitle_revision += 1  # A manual choice wins over pending automatic loading.
         revision = self._subtitle_revision
         if track.source == "provider" and self.provider_subtitles is not None:
@@ -238,6 +244,7 @@ class PlaybackSession:
         player.observe("message", lambda value: generation == self._generation and value and self._message(str(value)))
         player.on_close(lambda: self._actions.put_nowait((generation, "closed")))
         self._player = player
+        handover = self._hand_over_subtitles(generation, episode, stream, player)
         try:
             await player.launch(
                 stream.url,
@@ -250,12 +257,14 @@ class PlaybackSession:
             )
         except PlayerError as exc:
             self._player = None
+            if handover is not None:
+                handover[0].cancel()
             return self._fail(str(exc))
 
         self._last_saved = start or 0.0
         self._message(self.player_note or (f"Resumed at {format_time(start)}" if start else ""))
         self._spawn(self._load_skip(generation, episode))
-        self._spawn(self._load_subtitles(generation, episode, stream))
+        self._spawn(self._load_subtitles(generation, episode, stream, handover))
 
         while True:
             source, action = await self._actions.get()
@@ -364,7 +373,26 @@ class PlaybackSession:
             self._apply_skips(self.state.position)
         self._emit()
 
-    async def _load_subtitles(self, generation: int, episode: Episode, stream: Stream) -> None:
+    def _hand_over_subtitles(
+        self, generation: int, episode: Episode, stream: Stream, player: Player,
+    ) -> tuple[asyncio.Task[list[tuple[str, str]] | None], list[str]] | None:
+        """For a player that can't load subtitles while it plays, but gets a downloaded file: find
+        them while the episode downloads, so they're beside the file before the player opens it."""
+        if self.live_subtitles or not self.auto_subtitles:
+            return None
+        route, give = getattr(player, "route", None), getattr(player, "give_subtitles", None)
+        if route is None or give is None or route(stream.url, stream.headers) != "file":
+            return None
+        failures: list[str] = []
+        task = self._spawn(self._find_subtitles(
+            generation, self._subtitle_revision, episode, stream, list(self._provider_tracks), failures))
+        give(task)
+        return task, failures
+
+    async def _load_subtitles(
+        self, generation: int, episode: Episode, stream: Stream,
+        handover: tuple[asyncio.Task[list[tuple[str, str]] | None], list[str]] | None = None,
+    ) -> None:
         if not self.auto_subtitles:
             self.state.subtitles = "automatic loading off · Shift+C to choose"
             self._emit()
@@ -372,13 +400,62 @@ class PlaybackSession:
         revision = self._subtitle_revision
         loaded = self._loaded
         tracks = list(self._provider_tracks)
+        if not self.live_subtitles:
+            await self._report_handover(generation, revision, tracks, handover)
+            return
         await loaded.wait()  # sub-add needs a loaded file
         if generation != self._generation or revision != self._subtitle_revision:
             return
+        failures: list[str] = []
+        found = await self._find_subtitles(generation, revision, episode, stream, tracks, failures)
+        if found is None:
+            return
+        for position, (_language, path) in enumerate(found):
+            async with self._subtitle_command_lock:
+                if generation != self._generation or revision != self._subtitle_revision:
+                    return
+                success = await self._send("sub-add", path, "select" if position == 0 else "auto")
+            if generation != self._generation or revision != self._subtitle_revision:
+                return
+            if not success:
+                self.state.subtitles = "player could not load subtitles · Shift+C to retry"
+                self._emit()
+                return
+        self._summarize_subtitles(found, failures, tracks)
+
+    async def _report_handover(
+        self, generation: int, revision: int, tracks: list[SubtitleTrack],
+        handover: tuple[asyncio.Task[list[tuple[str, str]] | None], list[str]] | None,
+    ) -> None:
+        """What became of the subtitles given to a player that can't load them while it plays."""
+        if handover is None:
+            self.state.subtitles = "this player can't load subtitles from Cue; VLC and mpv can"
+            self._emit()
+            return
+        task, failures = handover
+        found = await task
+        if found is None or generation != self._generation or revision != self._subtitle_revision:
+            return
+        placed = len(getattr(self._player, "sidecars", ()))
+        if placed:
+            languages = ", ".join(language for language, _ in found[:placed])
+            self.state.subtitles = f"{languages} · saved beside the episode for the player"
+            self._emit()
+        elif found:
+            self.state.subtitles = "found, but not in time for the player · VLC or mpv can load them"
+            self._emit()
+        else:
+            self._summarize_subtitles(found, failures, tracks)
+
+    async def _find_subtitles(
+        self, generation: int, revision: int, episode: Episode, stream: Stream,
+        tracks: list[SubtitleTrack], failures: list[str],
+    ) -> list[tuple[str, str]] | None:
+        """``(language, path)`` of the server's subtitles in your languages, else the subtitle
+        sources'; problems go in ``failures``. None once the episode or choice has changed."""
         self.state.subtitles = "loading server subtitles…" if tracks else "checking subtitles…"
         self._emit()
         found: list[tuple[str, str]] = []
-        failures: list[str] = []
         if self.provider_subtitles is not None:
             for preference in self.subtitle_languages:
                 preferred = language_code(preference)
@@ -395,7 +472,7 @@ class PlaybackSession:
                         found.append((track.language, path))
                     break
         if generation != self._generation or revision != self._subtitle_revision:
-            return
+            return None
         # A server track is tied to this exact stream. Search the optional service
         # only when no preferred server subtitle could be loaded.
         try:
@@ -409,18 +486,11 @@ class PlaybackSession:
             log.warning("Subtitle lookup failed: %s", exc)
             failures.append(str(exc))
         if generation != self._generation or revision != self._subtitle_revision:
-            return
-        for position, (_language, path) in enumerate(found):
-            async with self._subtitle_command_lock:
-                if generation != self._generation or revision != self._subtitle_revision:
-                    return
-                success = await self._send("sub-add", path, "select" if position == 0 else "auto")
-            if generation != self._generation or revision != self._subtitle_revision:
-                return
-            if not success:
-                self.state.subtitles = "player could not load subtitles · Shift+C to retry"
-                self._emit()
-                return
+            return None
+        return found
+
+    def _summarize_subtitles(self, found: list[tuple[str, str]], failures: list[str],
+                             tracks: list[SubtitleTrack]) -> None:
         if found:
             self.state.subtitles = ", ".join(language for language, _ in found)
         elif failures:
@@ -460,10 +530,11 @@ class PlaybackSession:
             return False
         return True
 
-    def _spawn(self, coroutine: Coroutine[Any, Any, None]) -> None:
+    def _spawn(self, coroutine: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     def _cancel_tasks(self) -> None:
         for task in list(self._tasks):

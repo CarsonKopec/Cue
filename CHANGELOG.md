@@ -17,6 +17,13 @@
 - Each source keeps its settings in `[subtitles.<name>]`, the way OpenSubtitles already
   did with `[subtitles.opensubtitles]`. `enabled = false` turns one off.
 - Now Playing says "searching for subtitles…" rather than naming OpenSubtitles.
+- **Subtitles in Windows' Media Player.** The Default app never got subtitles: Cue loads
+  them once a player reports it's playing, and Media Player reports nothing. Now, while
+  a streamed episode downloads for it, Cue finds the subtitles and saves them beside the
+  file as `<episode>.srt` (WebVTT and ASS converted to SRT), where Media Player and most
+  players load them by themselves. Other players Cue can't control now say they can't
+  load subtitles, instead of showing nothing.
+- `cue plugin install` and `cue plugin list` name the subtitle sources a plugin adds.
 - Cue's version is 0.5.0, which the new plugins require; 0.4.1 refuses them with a
   message to update.
 - **A wiki.** The documentation moved to the

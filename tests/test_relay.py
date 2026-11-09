@@ -15,7 +15,7 @@ from cue.player.base import PlayerError
 from cue.player.command import CommandPlayer, split_arguments
 from cue.player.locate import find_ffmpeg
 from cue.player.registry import players
-from cue.player.relay import LocalRelay, RelayingPlayer, Storage, route_player
+from cue.player.relay import LocalRelay, RelayingPlayer, Storage, place_subtitles, route_player, vtt_to_srt
 from cue.providers.base import Stream
 
 MASTER = """#EXTM3U
@@ -384,6 +384,97 @@ async def test_files_only_players_get_a_download(tmp_path: Path) -> None:
     await kept.launch("https://site.test/a.m3u8", title="Show")
     await kept.quit()
     assert saved.exists()  # kept for replays
+
+
+async def test_files_only_players_get_subtitles_beside_the_download(tmp_path: Path,
+                                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    import cue.player.relay as relay_module
+
+    saved = tmp_path / "Show.mp4"
+    subtitle = tmp_path / "found.srt"
+    subtitle.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+
+    class FakeRelay:
+        ffmpeg = None
+
+        def save(self, stream, name, **options):
+            saved.write_bytes(b"video")
+            return saved
+
+    beside: list[bool] = []
+
+    class Opener(Recorder):
+        async def launch(self, url, **options) -> None:
+            beside.append(Path(url).with_suffix(".srt").is_file())  # there before the player opens the file
+            await super().launch(url, **options)
+
+    player = RelayingPlayer(Opener(), title="Default app", relay=FakeRelay, headers=frozenset(), hls=True, links=False)
+    messages: list[str] = []
+    player.observe("message", messages.append)
+    found = asyncio.get_running_loop().create_future()
+    player.give_subtitles(found)
+    asyncio.get_running_loop().call_later(0.05, found.set_result, [("en", str(subtitle))])
+    await player.launch("https://site.test/a.m3u8", title="Show")
+    assert beside == [True] and player.sidecars == [tmp_path / "Show.srt"]
+    assert "Finding subtitles…" in messages
+    await player.quit()
+    assert not saved.exists() and not (tmp_path / "Show.srt").exists()  # both go when you're done
+
+    # Subtitles that don't come in time don't hold the episode back.
+    monkeypatch.setattr(relay_module, "SUBTITLE_WAIT", 0.05)
+    late = RelayingPlayer(Recorder(), title="Default app", relay=FakeRelay, headers=frozenset(), hls=True, links=False)
+    late.give_subtitles(asyncio.get_running_loop().create_future())
+    await late.launch("https://site.test/a.m3u8", title="Show")
+    assert late.sidecars == [] and late._player.launches[0][0] == str(saved)
+
+
+def test_subtitles_are_placed_as_srt_under_the_episodes_name(tmp_path: Path) -> None:
+    video = tmp_path / "Show - Episode 1.mp4"
+    video.write_bytes(b"video")
+    srt = tmp_path / "en.srt"
+    srt.write_bytes("1\n00:00:01,000 --> 00:00:02,000\nCafé\n".encode())
+    vtt = tmp_path / "fr.vtt"
+    vtt.write_text("WEBVTT\n\n00:01.000 --> 00:02.000\nBonjour\n", encoding="utf-8")
+    ass = tmp_path / "ja.ass"
+    ass.write_text("[Script Info]\n", encoding="utf-8")
+
+    placed = place_subtitles(video, [("en", str(srt)), ("fr", str(vtt)), ("ja", str(ass))], ffmpeg=None)
+    assert placed == [tmp_path / "Show - Episode 1.srt", tmp_path / "Show - Episode 1.fr.srt"]  # ASS needs FFmpeg
+    assert placed[0].read_bytes() == srt.read_bytes()
+    assert placed[1].read_bytes().startswith(b"\xef\xbb\xbf")  # UTF-8 that Windows players recognise
+    assert placed[1].read_text(encoding="utf-8-sig") == "1\n00:00:01,000 --> 00:00:02,000\nBonjour\n"
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="needs FFmpeg")
+def test_ffmpeg_turns_other_subtitles_into_srt(tmp_path: Path) -> None:
+    video = tmp_path / "Show.mp4"
+    ass = tmp_path / "en.ass"
+    ass.write_text(
+        "[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, Bold, Italic, Alignment\n"
+        "Style: Default,Arial,20,&H00FFFFFF,0,0,2\n\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,Hello there\n",
+        encoding="utf-8",
+    )
+    [placed] = place_subtitles(video, [("en", str(ass))], ffmpeg=find_ffmpeg())
+    text = placed.read_text(encoding="utf-8-sig")
+    assert placed == tmp_path / "Show.srt" and "00:00:01,000 --> 00:00:02,500" in text and "Hello there" in text
+
+
+def test_webvtt_becomes_srt() -> None:
+    vtt = (
+        "WEBVTT\nKind: captions\n\nNOTE made by hand\n\nSTYLE\n::cue { color: red }\n\n"
+        "intro\n00:01.5 --> 00:03.250 align:start position:10%\n"
+        "<v Narrator>Tom &amp; <i>Jerry</i></v>\n<c.yellow>run</c>\n\n"
+        "01:02:03.004 --> 01:02:04.000\n<00:00:01.000>karaoke <B>loud</B>\n\n"
+        "00:05.000 --> 00:06.000\n"  # nothing to show
+    )
+    assert vtt_to_srt(vtt) == (
+        "1\n00:00:01,500 --> 00:00:03,250\nTom & <i>Jerry</i>\nrun\n\n"
+        "2\n01:02:03,004 --> 01:02:04,000\nkaraoke <b>loud</b>\n"
+    )
+    assert vtt_to_srt("WEBVTT\n") == ""
 
 
 # -- the "Another program" player -------------------------------------------------------------

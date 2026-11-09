@@ -68,6 +68,13 @@ Windows' Media Player can't open a stream's link: Windows would hand it to a web
 So for the Default app, Cue downloads the episode as an MP4 first, showing progress on Now
 Playing, then opens it.
 
+Such a player can't take subtitles once it's playing, so Cue looks for them while the
+episode downloads. Before opening the file, it saves them beside it under the same name:
+`<episode>.srt` for your first language, `<episode>.<language>.srt` for the others. WebVTT
+is converted to SRT by Cue, and ASS by FFmpeg. If the search is still running when the
+download finishes, the episode waits up to 20 seconds for it, then opens without them.
+The subtitle files are deleted along with the episode.
+
 The download is built to be quick and to leave little behind on a small disk:
 
 ### Only the finished file is written

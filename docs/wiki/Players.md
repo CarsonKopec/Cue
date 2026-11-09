@@ -74,6 +74,12 @@ link (Windows would hand it to a web browser), so Cue downloads a streamed episo
 with progress on the Now Playing screen, then opens the file. Files already on your PC
 open straight away. Press `q` in Cue when you're done.
 
+These apps can't take subtitles from Cue while they play. So while a streamed episode
+downloads, Cue finds its subtitles and saves them beside the file under the same name
+(`<episode>.srt`), where Media Player and most players look for them. Change them, or
+turn them off, with the app's own subtitles button; Cue's subtitle picker can't change
+them in it. Files already on your PC get no subtitles from Cue.
+
 This needs FFmpeg (or yt-dlp); on Windows `cue install --ffmpeg` gets it. The downloads
 are quick and leave little behind; see the [`[playback]` settings](Configuration#playback).
 

@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from cue.player.base import PlayerError
+from cue.player.relay import RelayingPlayer
 from cue.player.session import PlaybackSession
 from cue.providers.base import Episode, Show, Stream, StreamSubtitle
 from cue.subtitles import SubtitleError, SubtitleTrack
@@ -179,6 +180,75 @@ async def test_unavailable_preference_is_not_replaced_with_wrong_language(tmp_pa
         await load(session)
     assert not player.commands
     assert "preferred language unavailable" in session.state.subtitles
+
+
+async def test_players_that_only_open_files_get_subtitles_beside_the_episode(tmp_path, store):
+    saved = tmp_path / "playback" / "Show.mp4"
+
+    class FakeRelay:
+        ffmpeg = None
+
+        def save(self, stream, name, **options):
+            saved.parent.mkdir(exist_ok=True)
+            saved.write_bytes(b"video")
+            return saved
+
+    opened = []
+
+    class Opener:  # like the Default app: opens a file, reports nothing back, takes no commands
+        running = True
+
+        def observe(self, name, callback):
+            pass
+
+        def on_close(self, callback):
+            pass
+
+        async def launch(self, url, **kwargs):
+            opened.append((url, Path(url).with_suffix(".srt").read_text(encoding="utf-8-sig")))
+
+        async def command(self, *args, timeout=5.0):
+            raise PlayerError("can't be controlled")
+
+        async def quit(self, timeout=3.0):
+            pass
+
+        def kill(self):
+            pass
+
+    def factory():
+        return RelayingPlayer(Opener(), title="Default app", relay=FakeRelay, headers=frozenset(), hls=True,
+                              links=False)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, text=VTT))) as client:
+        session = PlaybackSession(
+            provider_name="anime", provider=Provider(), show=Show("s", "Show"), queue=[Episode("s", 1)],
+            store=store, player_factory=factory, provider_subtitles=ProviderSubtitles(client, tmp_path / "subs"),
+            live_subtitles=False,
+        )
+        task = asyncio.create_task(session.run())
+        try:
+            await wait_for(lambda: "beside the episode" in session.state.subtitles)
+        finally:
+            session.stop()
+            await asyncio.wait_for(task, 5)
+    [(url, text)] = opened
+    assert url == str(saved) and text == "1\n00:00:00,000 --> 00:00:05,000\nHello from the server\n"
+    assert session.state.subtitles == "en · saved beside the episode for the player"
+    assert session.state.error is None
+
+
+async def test_players_that_cant_load_subtitles_say_so(tmp_path, store):
+    async with httpx.AsyncClient() as client:
+        session, player = session_for(store, ProviderSubtitles(client, tmp_path), Stream("https://media.test/v.m3u8"),
+                                      live_subtitles=False)
+        await load(session)
+        assert session.state.subtitles == "this player can't load subtitles from Cue; VLC and mpv can"
+        track = SubtitleTrack("en", "Other", source="provider")
+        session._offered_tracks[id(track)] = session._generation
+        with pytest.raises(SubtitleError, match="can't change subtitles while it plays"):
+            await session.use_subtitle(track)
+    assert player.commands == []
 
 
 async def test_restricted_subtitle_falls_back_to_optional_service(tmp_path, store):

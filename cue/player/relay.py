@@ -11,7 +11,8 @@ Cue steps in as each player needs:
   passed through).
 * ``save()``: the episode as a temporary MP4, for players that only open files, such
   as Windows' Media Player. Pieces are fetched several at a time into memory and fed
-  to FFmpeg, so only the finished file touches the disk; yt-dlp is the fallback.
+  to FFmpeg, so only the finished file touches the disk; yt-dlp is the fallback. Its
+  subtitles go beside it as ``<episode>.srt``, where those players look for them.
 
 The relay listens on 127.0.0.1 only, so nothing outside this PC can use it.
 """
@@ -21,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import html
 import logging
 import re
 import shutil
@@ -31,7 +33,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -56,6 +58,7 @@ PLAYLIST_TYPE = "application/vnd.apple.mpegurl"
 PARALLEL = 12  # pieces downloaded at once (more gets throttled by some sources)
 WINDOW = 24  # pieces held in memory ahead of FFmpeg
 RETRIES = 3
+SUBTITLE_WAIT = 20.0  # seconds a downloaded episode waits for its subtitles before it opens
 _URI_ATTRIBUTE = re.compile(r'URI="([^"]*)"')
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 _SUFFIX = re.compile(r"\.[A-Za-z0-9]{1,5}")
@@ -860,6 +863,17 @@ class RelayingPlayer:
         self._folder = folder
         self._messages: list[Callable[[Any], None]] = []
         self._cancelled = threading.Event()
+        self._subtitles: Awaitable[Sequence[tuple[str, str]] | None] | None = None
+        self.sidecars: list[Path] = []  # subtitle files put beside the downloaded episode
+
+    def give_subtitles(self, files: Awaitable[Sequence[tuple[str, str]] | None]) -> None:
+        """Subtitle files, ``(language, path)`` with the preferred first, to put beside a downloaded episode.
+
+        For players that can't load subtitles while they play: they're written next to the
+        file, under its name, before the player opens it. ``files`` may still be on its way;
+        the episode waits up to :data:`SUBTITLE_WAIT` seconds for it after downloading.
+        """
+        self._subtitles = files
 
     @property
     def running(self) -> bool:
@@ -900,6 +914,7 @@ class RelayingPlayer:
         stream = Stream(url, dict(headers) if headers else None)
         if route == "file":
             self._file = await self._download(stream, title or "Cue")
+            self.sidecars = await self._place_subtitles(self._file)
             await self._player.launch(str(self._file), start=None, headers=None, title=title, extra_args=extra_args)
             return
         relay = await asyncio.to_thread(self._relay)
@@ -922,6 +937,30 @@ class RelayingPlayer:
             quality=self._quality, storage=self._storage,
         )
 
+    async def _place_subtitles(self, video: Path) -> list[Path]:
+        if self._subtitles is None:
+            return []
+        pending = asyncio.ensure_future(self._subtitles)
+        if not pending.done():
+            for callback in self._messages:
+                callback("Finding subtitles…")
+        try:
+            files = await asyncio.wait_for(asyncio.shield(pending), SUBTITLE_WAIT)
+        except TimeoutError:
+            log.info("Subtitles weren't ready in time; opening %s without them", video.name)
+            return []
+        except asyncio.CancelledError:
+            if pending.cancelled():  # the search was called off, not this episode
+                return []
+            raise
+        except Exception as exc:  # subtitles are a bonus; never let them stop the episode
+            log.warning("Subtitles for %s failed: %s", video.name, exc)
+            return []
+        if not files:
+            return []
+        relay = await asyncio.to_thread(self._relay)
+        return await asyncio.to_thread(place_subtitles, video, files, getattr(relay, "ffmpeg", None))
+
     async def command(self, *args: Any, timeout: float = 5.0) -> Any:
         return await self._player.command(*args, timeout=timeout)
 
@@ -939,7 +978,90 @@ class RelayingPlayer:
         # Kept for no time at all: delete it now, unless the player still has it open
         # (then it goes with the next download, or when Cue closes).
         if self._file is not None and self._storage.keep_hours <= 0:
-            _delete(self._file)
+            for path in (self._file, *self.sidecars):
+                _delete(path)
+
+
+def place_subtitles(video: Path, files: Sequence[tuple[str, str]], ffmpeg: str | None = None) -> list[Path]:
+    """Copy subtitle files beside ``video``, under its name and as SRT; returns those written.
+
+    The first is ``<video>.srt``, which Windows' Media Player, VLC and most players load by
+    themselves; the others are ``<video>.<language>.srt``. WebVTT is converted here, other
+    formats (ASS) with FFmpeg when there is one.
+    """
+    placed: list[Path] = []
+    for index, (language, source) in enumerate(files):
+        suffix = ".srt" if index == 0 else f".{safe_filename(language)}.srt"
+        target = video.with_name(video.stem + suffix)
+        try:
+            if _write_srt(Path(source), target, ffmpeg):
+                placed.append(target)
+            else:
+                log.info("Couldn't turn %s into SRT for %s", source, video.name)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.warning("Couldn't put %s beside %s: %s", source, video.name, exc)
+    return placed
+
+
+def _write_srt(source: Path, target: Path, ffmpeg: str | None) -> bool:
+    extension = source.suffix.lower()
+    if extension == ".srt":
+        shutil.copyfile(source, target)
+        return True
+    if extension in (".vtt", ".webvtt"):
+        text = vtt_to_srt(source.read_text(encoding="utf-8-sig", errors="replace"))
+        if not text:
+            return False
+        target.write_text(text, encoding="utf-8-sig")  # the BOM tells Windows players it's UTF-8
+        return True
+    if ffmpeg is None:
+        return False
+    result = subprocess.run(  # noqa: S603 - FFmpeg converting Cue's own subtitle file
+        [ffmpeg, "-nostdin", "-loglevel", "error", "-y", "-i", str(source), "-f", "srt", str(target)],
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=30, creationflags=_NO_WINDOW, check=False,
+    )
+    return result.returncode == 0 and target.is_file() and target.stat().st_size > 0
+
+
+_VTT_TIME = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})")
+_KEEP_TAG = re.compile(r"</?[ibu]>", re.IGNORECASE)
+
+
+def vtt_to_srt(text: str) -> str:
+    """WebVTT as SRT: numbered cues with comma times; styling other than <i>, <b> and <u> is dropped."""
+    cues: list[str] = []
+    for block in re.split(r"\n[ \t]*\n", text.replace("\r\n", "\n").replace("\r", "\n").strip()):
+        lines = block.split("\n")
+        timing = next((index for index, line in enumerate(lines) if "-->" in line), None)
+        if timing is None:
+            continue  # the WEBVTT header, NOTE, STYLE and REGION blocks
+        start, _, end = lines[timing].partition("-->")
+        start, end = _srt_time(start), _srt_time(end.split()[0] if end.split() else "")
+        body = [_srt_line(line) for line in lines[timing + 1:]]
+        body = [line for line in body if line.strip()]
+        if start and end and body:
+            cues.append(f"{len(cues) + 1}\n{start} --> {end}\n" + "\n".join(body))
+    return "\n\n".join(cues) + "\n" if cues else ""
+
+
+def _srt_time(value: str) -> str:
+    match = _VTT_TIME.fullmatch(value.strip())
+    if match is None:
+        return ""
+    hours, minutes, seconds, millis = match.groups()
+    return f"{int(hours or 0):02d}:{int(minutes):02d}:{int(seconds):02d},{int(millis.ljust(3, '0')):03d}"
+
+
+def _srt_line(line: str) -> str:
+    kept: list[str] = []
+
+    def keep(match: re.Match[str]) -> str:
+        kept.append(match.group(0).lower())
+        return f"\x00{len(kept) - 1}\x00"
+
+    line = _KEEP_TAG.sub(keep, line)
+    line = html.unescape(re.sub(r"<[^>]*>", "", line))  # voices, classes, karaoke times
+    return re.sub(r"\x00(\d+)\x00", lambda match: kept[int(match.group(1))], line)
 
 
 def route_player(

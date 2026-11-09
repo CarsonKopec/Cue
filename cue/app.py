@@ -446,6 +446,7 @@ class CueApp(App[None]):
     def play(self, provider_name: str, show: Show, queue: Sequence[Episode], index: int) -> None:
         factory = self._player_factory
         note = ""
+        live_subtitles = True
         if factory is None:
             backend = player_backends().get(self.config.player)
             if backend is None:
@@ -472,6 +473,7 @@ class CueApp(App[None]):
 
             if not backend.controls:
                 note = f"Playing in {backend.title}, which Cue can't control: no auto-skip or resume point. Press q when done."
+                live_subtitles = False  # given beside a downloaded episode instead, when there is one
 
         session = PlaybackSession(
             provider_name=provider_name,
@@ -491,6 +493,7 @@ class CueApp(App[None]):
             quality=self.config.quality,
             player_args=self.config.player_args,
             player_note=note,
+            live_subtitles=live_subtitles,
         )
         self._sessions.add(session)
         self.push_screen(NowPlayingScreen(session), callback=lambda _: self._sessions.discard(session))

@@ -123,6 +123,10 @@ right name ("English"), the name wins.
   separate from the audio choice.
 - OpenSubtitles files are saved as `subs\<show>\<episode>.<language>.srt`. Gestdown's and
   SubDL's go in `subs\gestdown\` and `subs\subdl\`, a folder for each show.
+- Players that only open files, such as Windows' Media Player through the Default app,
+  get the subtitles as a file beside the downloaded episode (`<episode>.srt`), which they
+  load by themselves. They can't be changed from Cue's picker while it plays
+  ([Players](Players#default-app)).
 - Subtitles aren't saved next to episodes downloaded with `d`.
 - Missing or unreadable tracks are reported without stopping the video.
 - Cue doesn't make or translate subtitles where a source has none.
